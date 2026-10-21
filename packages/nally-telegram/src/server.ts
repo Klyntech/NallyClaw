@@ -254,7 +254,7 @@ try {
   let modelLabel = configuredModel ? "invalid-or-unresolved" : "automatic (no model env set)"
   try {
     const explicitModel = selectedModel()
-    if (explicitModel) modelLabel = `${explicitModel.providerID}/${explicitModel.id}`
+    if (explicitModel) modelLabel = explicitModel.id.startsWith(`${explicitModel.providerID}/`) ? explicitModel.id : `${explicitModel.providerID}/${explicitModel.id}`
   } catch {
     modelLabel = "invalid (check NALLY_DEFAULT_MODEL / OPENCODE_MODEL)"
   }
