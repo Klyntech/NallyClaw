@@ -68,6 +68,10 @@ function selectedModel() {
 }
 
 async function onMessage(message: TelegramTextMessage): Promise<string> {
+  // Telegram may deliver queued updates to the previous webhook while this process is booting.
+  // Never assume startup's readiness check has completed just because the HTTP listener is live.
+  await waitForAgent()
+
   let sessionID = sessions.get(message.userID)
   if (!sessionID) {
     const model = selectedModel()
