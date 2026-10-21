@@ -174,7 +174,7 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
         ? `;authHint=${authFailureHint(error)}`
         : ""
       assistantDiagnostics.push(
-        `error=${errorKind};status=${status}${authHint};provider=${String(candidate.providerID ?? "unknown").slice(0, 60)};model=${String(candidate.modelID ?? "unknown").slice(0, 80)};parts=${parts.map((part: any) => String(part?.type ?? "unknown")).slice(0, 12).join("/") || "none"}`,
+        `error=${errorKind};status=${status}${authHint};provider=${String(candidate.model?.providerID ?? candidate.providerID ?? "unknown").slice(0, 60)};model=${String(candidate.model?.id ?? candidate.modelID ?? "unknown").slice(0, 80)};parts=${parts.map((part: any) => String(part?.type ?? "unknown")).slice(0, 12).join("/") || "none"}`,
       )
     }
 
