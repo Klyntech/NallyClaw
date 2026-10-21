@@ -54,12 +54,29 @@ async function waitForAgent() {
   throw new Error("agent server did not become ready")
 }
 
+function selectedModel() {
+  // OPENCODE_MODEL accepts either "big-pickle" or an explicit "provider/model" reference.
+  const configured = process.env.NALLY_DEFAULT_MODEL?.trim() || process.env.OPENCODE_MODEL?.trim()
+  if (!configured) return undefined
+  const slash = configured.indexOf("/")
+  const providerID = slash > 0
+    ? configured.slice(0, slash)
+    : (process.env.NALLY_DEFAULT_PROVIDER?.trim() || "opencode")
+  const id = slash > 0 ? configured.slice(slash + 1) : configured
+  if (!providerID || !id) throw new Error("Invalid NALLY_DEFAULT_MODEL / OPENCODE_MODEL")
+  return { providerID, id }
+}
+
 async function onMessage(message: TelegramTextMessage): Promise<string> {
   let sessionID = sessions.get(message.userID)
   if (!sessionID) {
+    const model = selectedModel()
     const created = await api("/api/session", {
       method: "POST",
-      body: JSON.stringify({ title: `Telegram chat ${message.userID}` }),
+      body: JSON.stringify({
+        title: `Telegram chat ${message.userID}`,
+        ...(model ? { model } : {}),
+      }),
     })
     sessionID = created.data?.id
     if (typeof sessionID !== "string" || !sessionID) throw new Error("agent did not create a session")
@@ -73,28 +90,31 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
   const userMessageID = admitted.data?.id
   if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
 
-  const deadline = Date.now() + 110_000
-  while (Date.now() < deadline) {
-    const active = await api("/api/session/active")
-    if (!active.data?.[sessionID]) {
-      const result = await api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=50&order=desc`)
-      const messages = Array.isArray(result.data) ? result.data : []
-      const userIndex = messages.findIndex((item: any) => item.id === userMessageID)
-      const answer = messages
-        .slice(0, userIndex < 0 ? messages.length : userIndex)
-        .find((item: any) => item.type === "assistant" && !item.error)
-      const text = answer?.content
-        ?.filter((part: any) => part.type === "text")
-        .map((part: any) => part.text)
-        .join("")
-        .trim()
-      if (text) return text
-      // If the run has completed without a text answer, do not leak internal state.
-      throw new Error("agent completed without a text response")
-    }
-    await Bun.sleep(1_000)
+  // The prompt endpoint durably queues the input; wait explicitly for the agent loop to finish.
+  await api(`/api/experimental/session/${encodeURIComponent(sessionID)}/wait`, { method: "POST" })
+
+  // The completed transcript is authoritative. Use descending order so the newest turn is first,
+  // and only consider assistant messages newer than this Telegram input.
+  const result = await api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200&order=desc`)
+  const messages = Array.isArray(result.data) ? result.data : []
+  const userIndex = messages.findIndex((item: any) => item.id === userMessageID)
+  const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
+  for (const candidate of candidates) {
+    if (candidate.type !== "assistant" || candidate.error) continue
+    const text = Array.isArray(candidate.content)
+      ? candidate.content
+          .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+          .map((part: any) => part.text)
+          .join("")
+          .trim()
+      : ""
+    if (text) return text
   }
-  return "That request is taking longer than expected. Please send another message in a moment."
+
+  // Do not expose internal provider/tool details to Telegram; retain a useful diagnostic server-side.
+  const newestTypes = messages.slice(0, 8).map((item: any) => item?.type ?? "unknown").join(",")
+  log(`completed turn has no assistant text (user message found: ${userIndex >= 0}; newest types: ${newestTypes || "none"})`)
+  return "I couldn't get a text response from the model. Please try again; if this keeps happening, the model/provider configuration needs checking."
 }
 
 const agent = spawn(
