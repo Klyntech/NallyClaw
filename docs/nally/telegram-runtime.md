@@ -29,7 +29,7 @@ Do not expose the existing agent/server API directly to the public internet. Kee
 ## Known limitations
 
 - Text-only Telegram updates are currently supported; voice notes and hosted voice APIs are not wired into this entry point yet.
-- Chat-to-session mapping and duplicate-update tracking are in memory. A process restart loses these maps; durable session mapping needs persistent storage before treating the runtime as production-ready.
+- The session cache and duplicate-update tracker are in memory. User-to-session mappings are persisted in Neon, but the main agent session/history database remains SQLite; if that database is not on persistent storage, a container replacement can remove the associated conversation history.
 - The upstream dependency install currently uses a non-frozen install as a temporary workaround for the checked-in workspace lockfile mismatch. Reconcile and commit the lockfile before relying on reproducible builds.
 - Render reports the service as live only when its process starts; this does not by itself prove that an agent reply completes successfully or that memory stays below the Free-tier limit.
 
