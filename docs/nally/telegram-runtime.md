@@ -1,6 +1,6 @@
 # NallyClaw Telegram runtime
 
-The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes only `GET /healthz` and `POST /telegram/webhook` on the public port. The underlying adapted agent server runs on a separate loopback-only port; the public service does not proxy arbitrary agent API routes. User-facing identity and behavior are defined by Nally's system prompt.
+The Render entry point is `packages/nally-telegram/src/server.ts`. The public port exposes `GET /healthz`, `GET /` and `GET /voice` for the voice UI, the authenticated `/api/voice/*` endpoints, and `POST /telegram/webhook`. The underlying adapted agent server runs on a separate loopback-only port; the public service does not proxy arbitrary agent API routes. User-facing identity and behavior are defined by Nally's system prompt.
 
 ## Security and transport behavior
 
@@ -23,6 +23,7 @@ The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes on
 - `PORT`: supplied by Render.
 - `RENDER_EXTERNAL_URL`: supplied by Render and used to register the public webhook.
 - `DATABASE_URL`: your existing Neon PostgreSQL connection string, set as a secret in Render. This enables durable Telegram session mappings, long-term memory, and the RAG store; see [memory and RAG](memory-and-rag.md). The runtime's main session/history database remains SQLite at this stage.
+- Optional voice MVP: `NALLY_VOICE_ACCESS_TOKEN`, `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, and `ELEVENLABS_VOICE_ID`. Optional model override: `ELEVENLABS_TTS_MODEL`. These are documented in [voice-first web](voice-first-web.md).
 
 Do not expose the existing agent/server API directly to the public internet. Keep webhook authentication and user allowlisting enabled, and retain the agent's existing permission/approval behavior.
 
