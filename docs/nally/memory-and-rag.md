@@ -6,7 +6,7 @@ Nally's long-term memory and document retrieval use the existing Neon PostgreSQL
 
 Set these in the NallyClaw Render service's environment settings. Never commit secrets or paste the Neon connection string in chat.
 
-- `DATABASE_URL`: recommended Neon PostgreSQL connection string. `NALLY_DATABASE_URL` and `NEON_DATABASE_URL` are also accepted and take precedence if set.
+- `DATABASE_URL`: recommended Neon PostgreSQL connection string. The accepted names, in lookup priority, are `NALLY_DATABASE_URL`, then `DATABASE_URL`, then `NEON_DATABASE_URL`.
 - `NVIDIA_API_KEY`: NVIDIA API key. The same variable may be used by the configured chat model and the embeddings API.
 - `NALLY_EMBEDDING_MODEL`: leave unset until the desired NVIDIA embedding model is selected.
 - `NALLY_EMBEDDING_BASE_URL`: optional API base URL; defaults to `https://integrate.api.nvidia.com/v1`.
