@@ -140,11 +140,11 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
         return Response.json({ ok: true })
       } catch (error) {
         // Keep internal exception details out of Telegram and HTTP responses.
-        console.error("Telegram message handling failed", error)
+        console.error("Telegram message handling failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error))
         try {
           await sendMessage(chatID!, "I couldn't complete that request. Please try again.")
         } catch (sendError) {
-          console.error("Telegram error reply failed", sendError)
+          console.error("Telegram error reply failed", sendError instanceof Error ? `${sendError.name}: ${sendError.message}` : String(sendError))
         }
         return Response.json({ ok: true })
       }
