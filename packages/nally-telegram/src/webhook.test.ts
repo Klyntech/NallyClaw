@@ -93,6 +93,38 @@ describe("Telegram webhook", () => {
     expect(finalPayload.rich_message.markdown).toContain("**Done**")
   })
 
+  test("falls back to HTML Markdown when Rich Messages is unavailable", async () => {
+    const sent: { method: string; body: any }[] = []
+    const webhook = createTelegramWebhook({
+      token: "test-token",
+      secret: SECRET,
+      allowedUserIDs: new Set([42]),
+      onMessage: async () => "## Result\n\n**Done**",
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const method = String(input).split("/").pop() ?? ""
+        const body = JSON.parse(String(init?.body ?? "{}"))
+        sent.push({ method, body })
+        if (method === "sendRichMessage") {
+          return Response.json({ ok: false, error_code: 404, description: "Method not found" }, { status: 404 })
+        }
+        return Response.json({ ok: true, result: { message_id: 44 } })
+      }) as typeof fetch,
+    })
+
+    const response = await webhook.fetch(
+      new Request("https://example.test/telegram/webhook", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": SECRET },
+        body: JSON.stringify(update(23)),
+      }),
+    )
+    expect(response.status).toBe(200)
+    await Bun.sleep(20)
+    expect(sent.map((item) => item.method)).toEqual(["sendRichMessage", "sendMessage"])
+    expect(sent[1]?.body.parse_mode).toBe("HTML")
+    expect(sent[1]?.body.text).toContain("<b>Result</b>")
+  })
+
   test("handles allowed messages and ignores duplicate update IDs", async () => {
     const { webhook, sent } = makeWebhook(async (message) => `reply: ${message.text}`)
     const makeRequest = () =>
