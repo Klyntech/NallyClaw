@@ -75,8 +75,15 @@ describe("Telegram webhook", () => {
         headers: { "x-telegram-bot-api-secret-token": SECRET },
         body: JSON.stringify(update(10)),
       })
-    expect((await webhook.fetch(makeRequest())).status).toBe(200)
-    expect((await webhook.fetch(makeRequest())).status).toBe(200)
+    const first = await webhook.fetch(makeRequest())
+    expect(first.status).toBe(200)
+    expect(await first.json()).toEqual({ ok: true, accepted: true })
+    const duplicate = await webhook.fetch(makeRequest())
+    expect(duplicate.status).toBe(200)
+    expect(await duplicate.json()).toEqual({ ok: true, duplicate: true })
+
+    // Processing and Telegram sendMessage happen after the webhook is acknowledged.
+    await Bun.sleep(10)
     expect(sent).toHaveLength(1)
     expect(JSON.parse(sent[0]!).chat_id).toBe(42)
     expect(JSON.parse(sent[0]!).text).toBe("reply: hello")
