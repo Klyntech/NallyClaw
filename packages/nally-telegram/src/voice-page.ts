@@ -87,19 +87,74 @@ async function speak(text) {
   if (speakingAudio) URL.revokeObjectURL(speakingAudio.src);
   if (!ended) setState("listening", "Listening… speak naturally");
 }
+function fillerForProgress(status) {
+  const value = String(status || "").toLowerCase();
+  if (value.includes("searching the web")) return "I'm looking that up now.";
+  if (value.includes("fetching page")) return "I'm opening that page now.";
+  if (value.includes("reading page")) return "Let me go through the page.";
+  if (value.includes("reading file")) return "Let me inspect the file first.";
+  if (value.includes("searching files")) return "I'm checking the relevant files.";
+  if (value.includes("editing file")) return "I'm making that change now.";
+  if (value.includes("writing file")) return "I'm writing that out now.";
+  if (value.includes("running command")) return "I'm running that and checking the result.";
+  if (value.includes("searching memory") || value.includes("saving memory")) return "Let me check what I have in memory.";
+  if (value.includes("subagent")) return "I'm splitting up part of the work to check it carefully.";
+  if (value.includes("using ") && value.includes(" tool")) return "I'm using a tool to check that.";
+  if (value.includes("thinking")) return "Let me work through this.";
+  return "I'm working through that now.";
+}
+async function speakFiller(text) {
+  if (ended) return;
+  const response = await request("/api/voice/speech", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ text }) });
+  const blob = await response.blob();
+  if (ended) return;
+  if (speakingAudio) { speakingAudio.pause(); URL.revokeObjectURL(speakingAudio.src); }
+  speakingAudio = new Audio(URL.createObjectURL(blob));
+  await speakingAudio.play();
+  await new Promise(resolve => { speakingAudio.onended = resolve; speakingAudio.onerror = resolve; });
+  if (speakingAudio) URL.revokeObjectURL(speakingAudio.src);
+}
 async function sendTurn(text) {
   if (ended || busy || !text.trim()) return;
-  busy = true; setState("thinking", "Nally is thinking…");
+  busy = true; setState("thinking", "Nally is working…");
   addLine("YOU", text.trim());
+  const turnStarted = Date.now();
+  let progressDone = false, lastStatus = "", lastFillerAt = 0, fillerCount = 0;
+  const progressWatcher = (async () => {
+    while (!progressDone && !ended) {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        if (progressDone || ended || !sessionId) break;
+        const response = await request("/api/voice/progress", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ sessionId }) });
+        const data = await response.json();
+        const current = String(data.status || "");
+        if (current && current !== lastStatus && Date.now() - turnStarted >= 3200 && Date.now() - lastFillerAt >= 4500 && fillerCount < 3) {
+          lastStatus = current;
+          const filler = fillerForProgress(current);
+          if (!ended) {
+            lastFillerAt = Date.now(); fillerCount++;
+            try { await speakFiller(filler); } catch {}
+          }
+        } else if (current) {
+          lastStatus = current;
+        }
+      } catch {}
+    }
+  })();
   try {
     const response = await request("/api/voice/message", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sessionId,text:text.trim()})});
+    progressDone = true;
+    await progressWatcher;
     const data = await response.json();
     if (!data.text) throw new Error("Nally returned an empty response");
     addLine("NALLY", data.text);
     await speak(data.text);
   } catch (error) {
+    progressDone = true;
+    await progressWatcher;
     if (!ended) setState("listening", error.message || "Could not complete that turn");
   } finally {
+    progressDone = true;
     busy = false;
     if (!ended && document.body.dataset.state !== "speaking") setState("listening", "Listening… speak naturally");
   }
