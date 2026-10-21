@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { renderTelegramMarkdown } from "./markdown"
+import { renderTelegramMarkdown, splitTelegramRichMarkdown } from "./markdown"
 
 describe("renderTelegramMarkdown", () => {
   test("renders Markdown headings and emphasis as Telegram HTML", () => {
@@ -38,6 +38,21 @@ describe("renderTelegramMarkdown", () => {
     expect(rendered).toContain("&lt;b&gt;not bold&lt;/b&gt;")
     expect(rendered).not.toContain("<script>")
     expect(rendered).not.toContain("<b>not bold</b>")
+  })
+
+  test("preserves Markdown for Telegram native Rich Messages", () => {
+    const source = "# Status\n\n| Service | State |\n| --- | --- |\n| Nally | Live |\n\n**Bold**"
+    const chunks = splitTelegramRichMarkdown(source)
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toContain("# Status")
+    expect(chunks[0]).toContain("| Service | State |")
+    expect(chunks[0]).toContain("**Bold**")
+  })
+
+  test("splits rich replies without exceeding the message limit", () => {
+    const chunks = splitTelegramRichMarkdown("x".repeat(70_000))
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.every((chunk) => chunk.length <= 30_000)).toBe(true)
   })
 
   test("splits long replies into Telegram-sized messages", () => {
