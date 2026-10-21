@@ -67,7 +67,7 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
       payload = undefined
     }
     if (!response.ok) {
-      throw new Error(payload?.description ?? `Telegram ${method} failed with HTTP ${response.status}`)
+      throw new Error(`Telegram ${method} failed with HTTP ${response.status}` + (payload?.description ? `: ${payload.description}` : ""))
     }
     if (!payload?.ok) throw new Error(payload?.description ?? `Telegram ${method} failed`)
     return payload.result
