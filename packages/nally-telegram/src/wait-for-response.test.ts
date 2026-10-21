@@ -40,6 +40,65 @@ describe("waitForAssistantMessage", () => {
     expect(result.messages[0]?.type).toBe("assistant")
   })
 
+  test("waits past a completed tool-call iteration until the final assistant response", async () => {
+    let calls = 0
+    let clock = 0
+    const result = await waitForAssistantMessage(
+      async () => {
+        calls++
+        if (calls === 1) {
+          return {
+            data: [
+              {
+                id: "msg-assistant-tool-call",
+                type: "assistant",
+                finish: "tool-calls",
+                time: { completed: "2026-10-21T16:00:00.000Z" },
+                content: [
+                  { type: "text", text: "I'll search for the answer now." },
+                  { type: "tool", tool: "websearch", state: { status: "completed" } },
+                ],
+              },
+              { id: "msg-user", type: "user" },
+            ],
+          }
+        }
+        return {
+          data: [
+            {
+              id: "msg-assistant-final",
+              type: "assistant",
+              finish: "stop",
+              time: { completed: "2026-10-21T16:00:02.000Z" },
+              content: [{ type: "text", text: "Here is the completed comparison table." }],
+            },
+            {
+              id: "msg-assistant-tool-call",
+              type: "assistant",
+              finish: "tool-calls",
+              time: { completed: "2026-10-21T16:00:00.000Z" },
+              content: [
+                { type: "text", text: "I'll search for the answer now." },
+                { type: "tool", tool: "websearch", state: { status: "completed" } },
+              ],
+            },
+            { id: "msg-user", type: "user" },
+          ],
+        }
+      },
+      "msg-user",
+      {
+        timeoutMs: 1_000,
+        pollIntervalMs: 100,
+        now: () => clock,
+        sleep: async (ms) => { clock += ms },
+      },
+    )
+
+    expect(calls).toBe(2)
+    expect(result.messages[0]?.id).toBe("msg-assistant-final")
+  })
+
   test("emits a readable tool progress status while the assistant is working", async () => {
     let calls = 0
     let clock = 0
