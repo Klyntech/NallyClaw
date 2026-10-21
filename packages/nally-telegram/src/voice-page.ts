@@ -137,7 +137,10 @@ async function begin() {
     socket.onclose = () => { if (!ended) setState("idle", "Live transcription disconnected. End the call and retry."); };
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error("Could not connect to live transcription")); setTimeout(() => reject(new Error("Transcription connection timed out")), 12000); });
     processor.onaudioprocess = (event) => {
-      if (ended || muted || socket?.readyState !== WebSocket.OPEN) return;
+      // Keep the ScriptProcessor silent on output to avoid playing microphone audio
+      // through the speakers and feeding it back into transcription.
+      event.outputBuffer.getChannelData(0).fill(0);
+      if (ended || muted || busy || document.body.dataset.state === "speaking" || socket?.readyState !== WebSocket.OPEN) return;
       const pcm = floatTo16BitPCM(event.inputBuffer.getChannelData(0), audioContext.sampleRate);
       socket.send(pcm.buffer);
     };
