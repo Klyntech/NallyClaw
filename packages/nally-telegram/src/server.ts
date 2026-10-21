@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { createTelegramWebhook, type TelegramTextMessage } from "./webhook"
+import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { waitForAssistantMessage } from "./wait-for-response"
 import { getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
@@ -120,22 +120,25 @@ function authFailureHint(error: any) {
   return "auth-details-unavailable"
 }
 
-async function onMessage(message: TelegramTextMessage): Promise<string> {
+async function onMessage(message: TelegramTextMessage, reportProgress: TelegramProgressReporter): Promise<string> {
   let stage = "waiting for agent readiness"
   const startedAt = Date.now()
   try {
+    await reportProgress("🤔 Thinking…")
     // Telegram may deliver queued updates while this process is booting.
     await waitForAgent()
 
     let sessionID = sessions.get(message.userID)
     if (!sessionID) {
       stage = "restoring Telegram session"
+      await reportProgress("🗂️ Restoring conversation…")
       sessionID = await getTelegramSession(message.userID)
       // The mapping lives in Neon, but the upstream runtime's session database may
       // still be local SQLite. Never reuse a Neon mapping to a missing runtime session.
       if (sessionID && !(await agentSessionExists(sessionID))) sessionID = undefined
       if (!sessionID) {
         stage = "creating session"
+        await reportProgress("🧵 Starting conversation…")
         const model = selectedModel()
         const created = await api("/api/session", {
           method: "POST",
@@ -147,12 +150,14 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
         const createdID = created.data?.id
         if (typeof createdID !== "string" || !createdID) throw new Error("agent did not create a session")
         stage = "persisting Telegram session"
+        await reportProgress("💾 Saving conversation…")
         sessionID = await saveTelegramSession(message.userID, createdID)
       }
       sessions.set(message.userID, sessionID)
     }
 
     stage = "submitting prompt"
+    await reportProgress("🤔 Thinking…")
     const admitted = await api(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
       method: "POST",
       body: JSON.stringify({ text: message.text, metadata: { channel: "telegram", updateID: message.updateID } }),
@@ -167,10 +172,11 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
     const { messages, userIndex } = await waitForAssistantMessage(
       () => api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200&order=desc`),
       userMessageID,
-      { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms) },
+      { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms), onProgress: reportProgress },
     )
 
     stage = "reading assistant response"
+    await reportProgress("✍️ Preparing response…")
     const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
     const assistantDiagnostics: string[] = []
     for (const candidate of candidates) {
