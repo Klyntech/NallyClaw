@@ -87,21 +87,31 @@ async function speak(text) {
   if (speakingAudio) URL.revokeObjectURL(speakingAudio.src);
   if (!ended) setState("listening", "Listening… speak naturally");
 }
+const recentFillers = [];
+const fillerOptions = [
+  { match: value => value.includes("searching the web"), lines: ["I'm looking that up now.", "Let me find the most relevant sources.", "I'll check a couple of sources first.", "I'm searching for reliable information.", "Let me see what the web turns up."] },
+  { match: value => value.includes("fetching page"), lines: ["I'm opening that page now.", "I've found a page to check.", "Let me pull up the page details.", "I'm fetching the page so I can inspect it."] },
+  { match: value => value.includes("reading page"), lines: ["Let me go through the page.", "I'm reading through the relevant sections.", "I'll check what the page actually says.", "Let me pull out the useful details."] },
+  { match: value => value.includes("reading file"), lines: ["Let me inspect the file first.", "I'm reading through that file.", "I'll trace how this file is put together.", "Let me see how this is wired up."] },
+  { match: value => value.includes("searching files"), lines: ["I'm checking the relevant files.", "I'll trace where that comes from.", "Let me find the part that matters.", "I'm looking across the project for that."] },
+  { match: value => value.includes("editing file"), lines: ["I'm making that change now.", "I've found where to update it.", "I'm adjusting that part of the code.", "Let me make the change in the right place."] },
+  { match: value => value.includes("writing file"), lines: ["I'm writing that out now.", "I'm putting the changes into the file.", "Let me update the implementation.", "I'm applying that edit now."] },
+  { match: value => value.includes("running command"), lines: ["I'm running that and checking the result.", "Let's see what the command reports.", "I'm checking the output now.", "I'll verify what that produces."] },
+  { match: value => value.includes("searching memory") || value.includes("saving memory"), lines: ["Let me check what I have in memory.", "I'm checking the saved context.", "I'll look at the relevant conversation context.", "Let me check what was saved."] },
+  { match: value => value.includes("subagent"), lines: ["I'm splitting up part of the work to check it carefully.", "I'm asking a helper process to inspect one part.", "I'll check this part separately as well."] },
+  { match: value => value.includes("using ") && value.includes(" tool"), lines: ["I'm using a tool to check that.", "I'm checking that with the relevant tool.", "Let me use the right tool for this.", "I'm verifying that with a tool."] },
+  { match: value => value.includes("thinking"), lines: ["Let me work through this.", "I'm connecting the pieces now.", "I'm working out the next step.", "Give me a moment to reason this through."] },
+];
 function fillerForProgress(status) {
   const value = String(status || "").toLowerCase();
-  if (value.includes("searching the web")) return "I'm looking that up now.";
-  if (value.includes("fetching page")) return "I'm opening that page now.";
-  if (value.includes("reading page")) return "Let me go through the page.";
-  if (value.includes("reading file")) return "Let me inspect the file first.";
-  if (value.includes("searching files")) return "I'm checking the relevant files.";
-  if (value.includes("editing file")) return "I'm making that change now.";
-  if (value.includes("writing file")) return "I'm writing that out now.";
-  if (value.includes("running command")) return "I'm running that and checking the result.";
-  if (value.includes("searching memory") || value.includes("saving memory")) return "Let me check what I have in memory.";
-  if (value.includes("subagent")) return "I'm splitting up part of the work to check it carefully.";
-  if (value.includes("using ") && value.includes(" tool")) return "I'm using a tool to check that.";
-  if (value.includes("thinking")) return "Let me work through this.";
-  return "I'm working through that now.";
+  const group = fillerOptions.find(option => option.match(value));
+  const choices = (group?.lines || ["I'm working through that now.", "Let me check the next step.", "I'm putting the pieces together."])
+    .filter(line => !recentFillers.includes(line));
+  const pool = choices.length ? choices : (group?.lines || ["I'm working through that now."]);
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
+  recentFillers.push(chosen);
+  if (recentFillers.length > 6) recentFillers.shift();
+  return chosen;
 }
 async function speakFiller(text) {
   if (ended) return;
