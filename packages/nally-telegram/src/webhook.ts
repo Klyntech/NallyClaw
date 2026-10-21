@@ -18,7 +18,7 @@ export type TelegramWebhookOptions = {
   token: string
   secret: string
   allowedUserIDs: ReadonlySet<number>
-  onMessage: (message: TelegramTextMessage) => Promise<string | void>
+  onMessage: (message: TelegramTextMessage, reportProgress: TelegramProgressReporter) => Promise<string | void>
   fetch?: typeof fetch
 }
 
@@ -54,6 +54,7 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
     })
     if (!response.ok) throw new Error(`Telegram ${method} failed with HTTP ${response.status}`)
     const payload = (await response.json()) as {
