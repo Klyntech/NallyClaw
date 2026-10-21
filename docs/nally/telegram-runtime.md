@@ -8,7 +8,9 @@ The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes on
 - Accepts private-chat text messages only.
 - Requires explicit numeric Telegram user IDs in an allowlist; an empty list disables the webhook.
 - Ignores bot messages, unsupported updates, and duplicate update IDs.
-- Splits long replies into Telegram-sized chunks and does not send internal exception details to chat.
+- Shows one editable progress message (thinking, tool usage, page/file reads, and response preparation), then removes it after the reply is ready.
+- Sends final replies through Telegram Rich Messages, preserving Markdown headings and **bold** text and allowing native rich tables; uses an HTML fallback if the Rich Messages method is unavailable.
+- Splits long replies within Telegram Rich Messages limits and does not send internal exception details to chat.
 - Automatically calls Telegram `setWebhook` at startup when the required Telegram variables and `RENDER_EXTERNAL_URL` are available.
 - Uses the adapted agent session/prompt API internally; the internal API listener binds to loopback only. This is an implementation detail, not the agent's user-facing identity.
 
@@ -33,4 +35,4 @@ Do not expose the existing agent/server API directly to the public internet. Kee
 
 ## Verification
 
-Run `bun test packages/nally-telegram/src/webhook.test.ts`. After deployment, verify `/healthz`, then send a private text message from an allowlisted Telegram account and confirm an agent response.
+Run `bun test packages/nally-telegram/src/*.test.ts` to cover the webhook, rich Markdown splitting, and tool progress labels. After deployment, verify `/healthz`, then send a private text message from an allowlisted Telegram account and confirm an agent response.
