@@ -32,7 +32,7 @@ export async function waitForAssistantMessage(
   const timeoutMs = options.timeoutMs ?? 120_000
   const pollIntervalMs = options.pollIntervalMs ?? 500
   const now = options.now ?? Date.now
-  const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const deadline = now() + timeoutMs
 
   while (true) {
