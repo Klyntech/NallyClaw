@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
-import { renderTelegramMarkdown } from "./markdown"
+import { renderTelegramMarkdown, splitTelegramRichMarkdown } from "./markdown"
 
 const TELEGRAM_API = "https://api.telegram.org"
 const MAX_UPDATE_IDS = 2_000
@@ -56,13 +56,20 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     })
-    if (!response.ok) throw new Error(`Telegram ${method} failed with HTTP ${response.status}`)
-    const payload = (await response.json()) as {
+    let payload: {
       ok?: boolean
       description?: string
       result?: { message_id?: number }
+    } | undefined
+    try {
+      payload = (await response.json()) as typeof payload
+    } catch {
+      payload = undefined
     }
-    if (!payload.ok) throw new Error(payload.description ?? `Telegram ${method} failed`)
+    if (!response.ok) {
+      throw new Error(payload?.description ?? `Telegram ${method} failed with HTTP ${response.status}`)
+    }
+    if (!payload?.ok) throw new Error(payload?.description ?? `Telegram ${method} failed`)
     return payload.result
   }
 
@@ -74,6 +81,26 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
         parse_mode: "HTML",
         disable_web_page_preview: true,
       })
+    }
+  }
+
+  function richMethodUnavailable(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    return /HTTP (404|405)|unknown method|method.{0,40}(not found|not supported|unsupported)/i.test(message)
+  }
+
+  async function sendRichMessage(chatID: number, markdown: string) {
+    for (const chunk of splitTelegramRichMarkdown(markdown)) {
+      try {
+        await telegramCall("sendRichMessage", {
+          chat_id: chatID,
+          rich_message: { markdown: chunk },
+        })
+      } catch (error) {
+        if (!richMethodUnavailable(error)) throw error
+        // Older Bot API installations can still receive the readable HTML fallback.
+        await sendMessage(chatID, chunk)
+      }
     }
   }
 
@@ -184,7 +211,7 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
             username: message?.from?.username,
           }, reportProgress)
           await deleteProgressMessage(chatID!, progressMessageID)
-          if (reply?.trim()) await sendMessage(chatID!, reply)
+          if (reply?.trim()) await sendRichMessage(chatID!, reply)
         } catch (error) {
           // Keep internal exception details out of Telegram and HTTP responses.
           console.error("Telegram message handling failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error))
