@@ -276,12 +276,12 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     try {
       const response = await fetch("https://api.deepgram.com/v1/auth/grant", {
         method: "POST",
-        headers: { authorization: \`Token \${key}\`, "content-type": "application/json" },
+        headers: { authorization: `Token ${key}`, "content-type": "application/json" },
         body: JSON.stringify({ ttl_seconds: 60 }),
         signal: AbortSignal.timeout(10_000),
       })
       if (!response.ok) {
-        log(\`Deepgram token request failed (HTTP \${response.status})\`)
+        log(`Deepgram token request failed (HTTP ${response.status})`)
         return voiceJSON({ error: "deepgram_token_unavailable" }, 502)
       }
       const payload = await response.json() as { access_token?: string; expires_in?: number }
@@ -326,7 +326,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
 
     try {
-      const admitted = await api(\`/api/session/\${encodeURIComponent(agentSessionID)}/prompt\`, {
+      const admitted = await api(`/api/session/${encodeURIComponent(agentSessionID)}/prompt`, {
         method: "POST",
         body: JSON.stringify({ text, metadata: { channel: "voice" } }),
       }, 120_000)
@@ -335,7 +335,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
         return voiceJSON({ error: "agent_did_not_accept_message" }, 502)
       }
       const { messages, userIndex } = await waitForAssistantMessage(
-        () => api(\`/api/session/\${encodeURIComponent(agentSessionID)}/message?limit=200&order=desc\`),
+        () => api(`/api/session/${encodeURIComponent(agentSessionID)}/message?limit=200&order=desc`),
         userMessageID,
         { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms) },
       )
@@ -367,7 +367,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
     try {
       const modelID = process.env.ELEVENLABS_TTS_MODEL?.trim() || "eleven_flash_v2_5"
-      const endpoint = \`https://api.elevenlabs.io/v1/text-to-speech/\${encodeURIComponent(voiceID)}/stream?output_format=mp3_22050_32\`
+      const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceID)}/stream?output_format=mp3_22050_32`
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
@@ -375,7 +375,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
         signal: AbortSignal.timeout(45_000),
       })
       if (!response.ok || !response.body) {
-        log(\`ElevenLabs speech request failed (HTTP \${response.status})\`)
+        log(`ElevenLabs speech request failed (HTTP ${response.status})`)
         return voiceJSON({ error: "speech_generation_failed" }, 502)
       }
       return new Response(response.body, {
