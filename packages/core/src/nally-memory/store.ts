@@ -172,7 +172,7 @@ async function embed(text: string, mode: EmbeddingMode): Promise<{ values: numbe
 async function optionalEmbedding(text: string, mode: EmbeddingMode) {
   try {
     return await embed(text, mode)
-  } catch (error) {
+  } catch {
     // Memory is durable even when an optional embeddings provider is unconfigured
     // or temporarily unavailable; retrieval falls back to lexical search.
     console.warn("[nally-memory] embedding unavailable; using lexical retrieval")
@@ -285,7 +285,7 @@ function clampLimit(limit = 5, max = 20) {
 }
 
 const vectorLiteral = (values: number[]) => `[${values.join(",")}]`
-const pattern = (query: string) => `%${query.trim().slice(0, 200).replace(/[\\%_]/g, "\\$&")}%`
+const pattern = (query: string) => `%${query.trim().slice(0, 200)}%`
 
 async function lexicalMemories(db: Sql, ownerKey: string, query: string, limit: number) {
   const match = pattern(query)
@@ -483,6 +483,11 @@ function chunkText(text: string, size = 1400, overlap = 180) {
   return chunks
 }
 
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
 export async function addKnowledge(input: { sessionID: string; title: string; content: string; source?: string }) {
   await ensureSchema()
   const db = sql()
@@ -490,7 +495,7 @@ export async function addKnowledge(input: { sessionID: string; title: string; co
   const title = input.title.trim().slice(0, 240) || "Untitled knowledge"
   const content = input.content.trim().slice(0, 150_000)
   if (!content) throw new Error("Knowledge content cannot be empty.")
-  const contentHash = await Bun.CryptoHasher.hash("sha256", content, "hex")
+  const contentHash = await sha256Hex(content)
   const existing = await db`
     SELECT id FROM nally_documents WHERE owner_key = ${ownerKey} AND content_hash = ${contentHash} AND deleted_at IS NULL
     LIMIT 1
