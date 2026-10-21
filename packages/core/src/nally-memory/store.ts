@@ -150,7 +150,7 @@ function embeddingConfig(): EmbeddingConfig | undefined {
     model,
     apiKey,
     dimensions,
-    baseURL: (process.env.NALLY_EMBEDDING_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1").replace(/\\/+$/, ""),
+    baseURL: (process.env.NALLY_EMBEDDING_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1").replace(/\/+$/, ""),
   }
 }
 async function embed(text: string, mode: EmbeddingMode): Promise<{ values: number[]; model: string } | undefined> {
