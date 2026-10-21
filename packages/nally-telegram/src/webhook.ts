@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "node:crypto"
+import { renderTelegramMarkdown } from "./markdown"
 
 const TELEGRAM_API = "https://api.telegram.org"
 const MAX_UPDATE_IDS = 2_000
-const MAX_MESSAGE_LENGTH = 4_000
 
 export type TelegramTextMessage = {
   updateID: number
@@ -11,6 +11,8 @@ export type TelegramTextMessage = {
   text: string
   username?: string
 }
+
+export type TelegramProgressReporter = (status: string) => Promise<void>
 
 export type TelegramWebhookOptions = {
   token: string
@@ -36,19 +38,6 @@ function safeEqual(left: string, right: string) {
   return a.byteLength === b.byteLength && timingSafeEqual(a, b)
 }
 
-function splitMessage(text: string) {
-  const chunks: string[] = []
-  let remaining = text.trim()
-  while (remaining.length > MAX_MESSAGE_LENGTH) {
-    let splitAt = remaining.lastIndexOf("\n", MAX_MESSAGE_LENGTH)
-    if (splitAt < MAX_MESSAGE_LENGTH / 2) splitAt = MAX_MESSAGE_LENGTH
-    chunks.push(remaining.slice(0, splitAt))
-    remaining = remaining.slice(splitAt).trimStart()
-  }
-  if (remaining) chunks.push(remaining)
-  return chunks
-}
-
 export function createTelegramWebhook(options: TelegramWebhookOptions) {
   if (!options.token.trim()) throw new Error("TELEGRAM_BOT_TOKEN is required")
   if (!options.secret.trim()) throw new Error("TELEGRAM_WEBHOOK_SECRET is required")
@@ -60,16 +49,39 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
   const request = options.fetch ?? fetch
   const seen = new Map<number, true>()
 
-  async function sendMessage(chatID: number, text: string) {
-    for (const chunk of splitMessage(text)) {
-      const response = await request(`${TELEGRAM_API}/bot${options.token}/sendMessage`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: chatID, text: chunk, disable_web_page_preview: true }),
+  async function telegramCall(method: string, body: Record<string, unknown>) {
+    const response = await request(`${TELEGRAM_API}/bot${options.token}/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) throw new Error(`Telegram ${method} failed with HTTP ${response.status}`)
+    const payload = (await response.json()) as {
+      ok?: boolean
+      description?: string
+      result?: { message_id?: number }
+    }
+    if (!payload.ok) throw new Error(payload.description ?? `Telegram ${method} failed`)
+    return payload.result
+  }
+
+  async function sendMessage(chatID: number, markdown: string) {
+    for (const chunk of renderTelegramMarkdown(markdown)) {
+      await telegramCall("sendMessage", {
+        chat_id: chatID,
+        text: chunk,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
       })
-      if (!response.ok) throw new Error(`Telegram sendMessage failed with HTTP ${response.status}`)
-      const payload = (await response.json()) as { ok?: boolean; description?: string }
-      if (!payload.ok) throw new Error(payload.description ?? "Telegram sendMessage failed")
+    }
+  }
+
+  async function deleteProgressMessage(chatID: number, messageID: number | undefined) {
+    if (messageID === undefined) return
+    try {
+      await telegramCall("deleteMessage", { chat_id: chatID, message_id: messageID })
+    } catch {
+      // Progress cleanup is best-effort; it must not hide the final reply.
     }
   }
 
@@ -131,24 +143,58 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
       // Acknowledge Telegram immediately. Model/provider calls can take longer than
       // Telegram's webhook delivery window; doing the work in the request path
       // causes retries and duplicate processing while the model is still running.
-      void Promise.resolve()
-        .then(() => options.onMessage({
-          updateID: updateID!,
-          chatID: chatID!,
-          userID: userID!,
-          text,
-          username: message?.from?.username,
-        }))
-        .then((reply) => (reply?.trim() ? sendMessage(chatID!, reply) : undefined))
-        .catch(async (error) => {
+      void Promise.resolve().then(async () => {
+        let progressMessageID: number | undefined
+        let progressAvailable = true
+        let lastProgress = ""
+        const reportProgress: TelegramProgressReporter = async (status) => {
+          const normalized = status.trim().slice(0, 180)
+          if (!normalized || normalized === lastProgress || !progressAvailable) return
+          try {
+            if (progressMessageID === undefined) {
+              const created = await telegramCall("sendMessage", {
+                chat_id: chatID!,
+                text: normalized,
+                disable_web_page_preview: true,
+              })
+              if (typeof created?.message_id === "number") progressMessageID = created.message_id
+              else progressAvailable = false
+            } else {
+              await telegramCall("editMessageText", {
+                chat_id: chatID!,
+                message_id: progressMessageID,
+                text: normalized,
+                disable_web_page_preview: true,
+              })
+            }
+            lastProgress = normalized
+          } catch (progressError) {
+            progressAvailable = false
+            console.error("Telegram progress update failed", progressError instanceof Error ? progressError.message : String(progressError))
+          }
+        }
+
+        try {
+          const reply = await options.onMessage({
+            updateID: updateID!,
+            chatID: chatID!,
+            userID: userID!,
+            text,
+            username: message?.from?.username,
+          }, reportProgress)
+          await deleteProgressMessage(chatID!, progressMessageID)
+          if (reply?.trim()) await sendMessage(chatID!, reply)
+        } catch (error) {
           // Keep internal exception details out of Telegram and HTTP responses.
           console.error("Telegram message handling failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error))
+          await deleteProgressMessage(chatID!, progressMessageID)
           try {
             await sendMessage(chatID!, "I couldn't complete that request. Please try again.")
           } catch (sendError) {
-            console.error("Telegram error reply failed", sendError instanceof Error ? `${sendError.name}: ${sendError.message}` : String(sendError))
+            console.error("Telegram error reply failed", sendError instanceof Error ? sendError.message : String(sendError))
           }
-        })
+        }
+      })
       return Response.json({ ok: true, accepted: true })
     },
   }
