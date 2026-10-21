@@ -49,7 +49,7 @@ body[data-state="listening"] .ring{animation:pulse 2s ease-out infinite}body[dat
 (() => {
 const $ = (id) => document.getElementById(id);
 const status = $("status"), transcript = $("transcript"), start = $("start"), mute = $("mute"), end = $("end"), access = $("access");
-let media, audioContext, source, processor, socket, sessionId, muted = false, busy = false, ended = true, utterance = "", speakingAudio;
+let media, audioContext, source, processor, socket, sessionId, keepAliveTimer, muted = false, busy = false, ended = true, utterance = "", speakingAudio;
 const setState = (state, label) => { document.body.dataset.state = state; status.textContent = label; };
 const authHeaders = () => ({ "authorization": "Bearer " + access.value.trim() });
 async function request(path, options = {}) {
@@ -134,8 +134,17 @@ async function begin() {
     socket = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-3&encoding=linear16&sample_rate=16000&channels=1&interim_results=true&smart_format=true&endpointing=300&utterance_end_ms=1000&vad_events=true", ["bearer", token]);
     socket.onmessage = onTranscript;
     socket.onerror = () => { if (!ended) setState("idle", "Live transcription connection error."); };
-    socket.onclose = () => { if (!ended) setState("idle", "Live transcription disconnected. End the call and retry."); };
+    socket.onclose = (event) => { if (!ended) setState("idle", "Live transcription disconnected (code " + event.code + "). End the call and retry."); };
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error("Could not connect to live transcription")); setTimeout(() => reject(new Error("Transcription connection timed out")), 12000); });
+    // Deepgram closes live streams after periods without audio unless KeepAlive
+    // control messages are sent. We pause PCM while Nally responds to avoid
+    // transcribing Nally's own voice, so keep the socket alive during that pause.
+    keepAliveTimer = setInterval(() => {
+      if (!ended && socket?.readyState === WebSocket.OPEN && (muted || busy || document.body.dataset.state === "speaking")) {
+        try { socket.send(JSON.stringify({ type: "KeepAlive" })); } catch {}
+      }
+    }, 3000);
+    socket.onerror = () => { if (!ended) setState("idle", "Live transcription connection error."); };
     processor.onaudioprocess = (event) => {
       // Keep the ScriptProcessor silent on output to avoid playing microphone audio
       // through the speakers and feeding it back into transcription.
@@ -160,6 +169,7 @@ async function stopCall(reset = true) {
     void fetch("/api/voice/end", { method: "POST", headers: { ...authHeaders(), "content-type": "application/json" }, body: JSON.stringify({ sessionId: previousSessionId }) }).catch(() => {});
   }
   ended = true;
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = undefined; }
   if (socket) { try { socket.close(); } catch {} socket = undefined; }
   if (processor) { try { processor.disconnect(); } catch {} processor = undefined; }
   if (source) { try { source.disconnect(); } catch {} source = undefined; }
