@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { createTelegramWebhook, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { waitForAssistantMessage } from "./wait-for-response"
+import { getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
 
 const host = "127.0.0.1"
 const internalPort = Number(process.env.NALLY_INTERNAL_PORT ?? 3001)
@@ -116,17 +117,23 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
 
     let sessionID = sessions.get(message.userID)
     if (!sessionID) {
-      stage = "creating session"
-      const model = selectedModel()
-      const created = await api("/api/session", {
-        method: "POST",
-        body: JSON.stringify({
-          title: `Telegram chat ${message.userID}`,
-          ...(model ? { model } : {}),
-        }),
-      })
-      sessionID = created.data?.id
-      if (typeof sessionID !== "string" || !sessionID) throw new Error("agent did not create a session")
+      stage = "restoring Telegram session"
+      sessionID = await getTelegramSession(message.userID)
+      if (!sessionID) {
+        stage = "creating session"
+        const model = selectedModel()
+        const created = await api("/api/session", {
+          method: "POST",
+          body: JSON.stringify({
+            title: `Telegram chat ${message.userID}`,
+            ...(model ? { model } : {}),
+          }),
+        })
+        const createdID = created.data?.id
+        if (typeof createdID !== "string" || !createdID) throw new Error("agent did not create a session")
+        stage = "persisting Telegram session"
+        sessionID = await saveTelegramSession(message.userID, createdID)
+      }
       sessions.set(message.userID, sessionID)
     }
 
