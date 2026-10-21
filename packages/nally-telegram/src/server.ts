@@ -25,7 +25,7 @@ function log(message: string, error?: unknown) {
   console.error(`[nally-telegram] ${message}`, error instanceof Error ? error.message : error ?? "")
 }
 
-async function api(path: string, init?: RequestInit) {
+async function api(path: string, init?: RequestInit, timeoutMs = 15_000) {
   const response = await fetch(new URL(path, internalURL), {
     ...init,
     headers: {
@@ -33,7 +33,7 @@ async function api(path: string, init?: RequestInit) {
       "content-type": "application/json",
       ...init?.headers,
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error(`agent API returned HTTP ${response.status}`)
   return response.json() as Promise<any>
@@ -95,7 +95,7 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
   if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
 
   // The prompt endpoint durably queues the input; wait explicitly for the agent loop to finish.
-  await api(`/api/experimental/session/${encodeURIComponent(sessionID)}/wait`, { method: "POST" })
+  await api(`/api/experimental/session/${encodeURIComponent(sessionID)}/wait`, { method: "POST" }, 120_000)
 
   // The completed transcript is authoritative. Use descending order so the newest turn is first,
   // and only consider assistant messages newer than this Telegram input.
