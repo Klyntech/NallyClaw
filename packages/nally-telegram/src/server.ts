@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process"
+import { timingSafeEqual } from "node:crypto"
+import { voicePage } from "./voice-page"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { waitForAssistantMessage } from "./wait-for-response"
@@ -22,6 +24,8 @@ process.env.OPENCODE_SERVER_PASSWORD = password
 const internalURL = `http://${host}:${internalPort}`
 const auth = `Basic ${btoa(`opencode:${password}`)}`
 const sessions = new Map<number, string>()
+const voiceSessions = new Map<string, string>()
+const voiceAccessToken = process.env.NALLY_VOICE_ACCESS_TOKEN?.trim() ?? ""
 
 function log(message: string, error?: unknown) {
   // Never log credentials, webhook URLs containing tokens, or raw Telegram payloads.
@@ -244,13 +248,160 @@ if (token && secret && allowedUserIDs.size > 0) {
   log("Telegram is not configured; set TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, and TELEGRAM_ALLOWED_USER_IDS")
 }
 
+function authorizedVoice(request: Request) {
+  if (!voiceAccessToken) return false
+  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? ""
+  const expectedBytes = Buffer.from(voiceAccessToken)
+  const suppliedBytes = Buffer.from(supplied)
+  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes)
+}
+
+function voiceJSON(body: unknown, status = 200) {
+  return Response.json(body, {
+    status,
+    headers: { "cache-control": "no-store" },
+  })
+}
+
+async function handleVoiceAPI(request: Request, pathname: string): Promise<Response> {
+  if (!authorizedVoice(request)) {
+    return voiceJSON({ error: voiceAccessToken ? "unauthorized" : "voice_not_configured" }, voiceAccessToken ? 401 : 503)
+  }
+
+  if (request.method !== "POST") return voiceJSON({ error: "method_not_allowed" }, 405)
+
+  if (pathname === "/api/voice/deepgram-token") {
+    const key = process.env.DEEPGRAM_API_KEY?.trim()
+    if (!key) return voiceJSON({ error: "deepgram_not_configured" }, 503)
+    try {
+      const response = await fetch("https://api.deepgram.com/v1/auth/grant", {
+        method: "POST",
+        headers: { authorization: \`Token \${key}\`, "content-type": "application/json" },
+        body: JSON.stringify({ ttl_seconds: 60 }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!response.ok) {
+        log(\`Deepgram token request failed (HTTP \${response.status})\`)
+        return voiceJSON({ error: "deepgram_token_unavailable" }, 502)
+      }
+      const payload = await response.json() as { access_token?: string; expires_in?: number }
+      if (!payload.access_token) return voiceJSON({ error: "deepgram_token_unavailable" }, 502)
+      return voiceJSON({ access_token: payload.access_token, expires_in: payload.expires_in ?? 30 })
+    } catch {
+      return voiceJSON({ error: "deepgram_unreachable" }, 502)
+    }
+  }
+
+  if (pathname === "/api/voice/session") {
+    try {
+      await waitForAgent()
+      const model = selectedModel()
+      const created = await api("/api/session", {
+        method: "POST",
+        body: JSON.stringify({ title: "Nally voice conversation", ...(model ? { model } : {}) }),
+      })
+      const agentSessionID = created?.data?.id
+      if (typeof agentSessionID !== "string" || !agentSessionID) {
+        return voiceJSON({ error: "session_creation_failed" }, 502)
+      }
+      const sessionId = crypto.randomUUID()
+      voiceSessions.set(sessionId, agentSessionID)
+      return voiceJSON({ sessionId })
+    } catch {
+      return voiceJSON({ error: "session_creation_failed" }, 502)
+    }
+  }
+
+  if (pathname === "/api/voice/message") {
+    let payload: { sessionId?: unknown; text?: unknown }
+    try {
+      payload = await request.json() as typeof payload
+    } catch {
+      return voiceJSON({ error: "invalid_json" }, 400)
+    }
+    const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : ""
+    const text = typeof payload.text === "string" ? payload.text.trim() : ""
+    const agentSessionID = voiceSessions.get(sessionId)
+    if (!agentSessionID) return voiceJSON({ error: "voice_session_not_found" }, 404)
+    if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
+
+    try {
+      const admitted = await api(\`/api/session/\${encodeURIComponent(agentSessionID)}/prompt\`, {
+        method: "POST",
+        body: JSON.stringify({ text, metadata: { channel: "voice" } }),
+      }, 120_000)
+      const userMessageID = admitted?.data?.id
+      if (typeof userMessageID !== "string" || !userMessageID) {
+        return voiceJSON({ error: "agent_did_not_accept_message" }, 502)
+      }
+      const { messages, userIndex } = await waitForAssistantMessage(
+        () => api(\`/api/session/\${encodeURIComponent(agentSessionID)}/message?limit=200&order=desc\`),
+        userMessageID,
+        { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms) },
+      )
+      const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
+      for (const candidate of candidates) {
+        if (candidate.type !== "assistant" || candidate.error || String(candidate.finish ?? "").toLowerCase() === "tool-calls") continue
+        const parts = Array.isArray(candidate.content) ? candidate.content : Array.isArray(candidate.parts) ? candidate.parts : []
+        const answer = parts.filter((part: any) => part?.type === "text" && typeof part.text === "string").map((part: any) => part.text).join("").trim()
+        if (answer) return voiceJSON({ text: answer })
+      }
+      return voiceJSON({ error: "agent_response_unavailable" }, 502)
+    } catch (error) {
+      log("voice agent turn failed", error)
+      return voiceJSON({ error: "agent_turn_failed" }, 502)
+    }
+  }
+
+  if (pathname === "/api/voice/speech") {
+    const key = process.env.ELEVENLABS_API_KEY?.trim()
+    const voiceID = process.env.ELEVENLABS_VOICE_ID?.trim()
+    if (!key || !voiceID) return voiceJSON({ error: "elevenlabs_not_configured" }, 503)
+    let payload: { text?: unknown }
+    try {
+      payload = await request.json() as typeof payload
+    } catch {
+      return voiceJSON({ error: "invalid_json" }, 400)
+    }
+    const text = typeof payload.text === "string" ? payload.text.trim() : ""
+    if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
+    try {
+      const modelID = process.env.ELEVENLABS_TTS_MODEL?.trim() || "eleven_flash_v2_5"
+      const endpoint = \`https://api.elevenlabs.io/v1/text-to-speech/\${encodeURIComponent(voiceID)}/stream?output_format=mp3_22050_32\`
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
+        body: JSON.stringify({ text, model_id: modelID }),
+        signal: AbortSignal.timeout(45_000),
+      })
+      if (!response.ok || !response.body) {
+        log(\`ElevenLabs speech request failed (HTTP \${response.status})\`)
+        return voiceJSON({ error: "speech_generation_failed" }, 502)
+      }
+      return new Response(response.body, {
+        headers: { "content-type": response.headers.get("content-type") || "audio/mpeg", "cache-control": "no-store", "x-content-type-options": "nosniff" },
+      })
+    } catch {
+      return voiceJSON({ error: "elevenlabs_unreachable" }, 502)
+    }
+  }
+
+  return voiceJSON({ error: "not_found" }, 404)
+}
+
 const server = Bun.serve({
   hostname: "0.0.0.0",
   port,
   async fetch(request) {
     const url = new URL(request.url)
     if (request.method === "GET" && url.pathname === "/healthz") {
-      return Response.json({ ok: true, agent: agent.exitCode === null ? "starting" : "stopped", telegram: !!telegram })
+      return Response.json({ ok: true, agent: agent.exitCode === null ? "starting" : "stopped", telegram: !!telegram, voice: !!voiceAccessToken })
+    }
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/voice")) {
+      return new Response(voicePage, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } })
+    }
+    if (url.pathname.startsWith("/api/voice/")) {
+      return handleVoiceAPI(request, url.pathname)
     }
     if (request.method === "POST" && url.pathname === "/telegram/webhook") {
       if (!telegram) return Response.json({ error: "telegram_not_configured" }, { status: 503 })
