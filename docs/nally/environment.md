@@ -22,11 +22,11 @@ Nally-specific model selectors can be supplied independently of secrets:
 | Variable | Meaning |
 | --- | --- |
 | `NALLY_DEFAULT_PROVIDER` | Default provider ID selected by the Telegram runtime |
-| `NALLY_DEFAULT_MODEL` | Default model ID, in the format expected by the existing OpenCode model registry |
+| `NALLY_DEFAULT_MODEL` | Exact OpenCode catalog model ID, preserved verbatim (including slashes); it is not parsed as a provider/model string |
 | `NALLY_ZEN_MODEL` | Optional explicit model ID to prefer for OpenCode Zen |
 | `NALLY_NIM_MODEL` | Optional explicit model ID to prefer for NVIDIA NIM |
 
-These selectors must be validated against the runtime's discovered provider/model registry at startup. If a configured provider/model is unavailable, fail with a clear sanitized startup error rather than silently falling back to a different model. The final runtime integration must confirm that these selectors are actually consumed; documentation alone does not implement model selection.
+`NALLY_DEFAULT_PROVIDER` and `NALLY_DEFAULT_MODEL` mirror OpenCode's session model reference: the provider ID and catalog model ID are separate fields. For example, `NALLY_DEFAULT_PROVIDER=nvidia` with `NALLY_DEFAULT_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b` preserves the full NVIDIA catalog ID. `OPENCODE_MODEL` remains a legacy `provider/model` shorthand only when `NALLY_DEFAULT_MODEL` is unset.
 
 ## Deployment/security notes
 
