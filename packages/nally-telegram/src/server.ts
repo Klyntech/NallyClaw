@@ -36,7 +36,16 @@ async function api(path: string, init?: RequestInit, timeoutMs = 15_000) {
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error(`agent API returned HTTP ${response.status}`)
-  return response.json() as Promise<any>
+
+  // OpenCode's wait endpoint may complete successfully with an empty response body.
+  // Only parse JSON when the endpoint actually returned content.
+  const body = await response.text()
+  if (!body.trim()) return undefined
+  try {
+    return JSON.parse(body) as any
+  } catch {
+    throw new Error(`agent API returned invalid JSON for ${path}`)
+  }
 }
 
 async function waitForAgent() {
