@@ -1,9 +1,13 @@
 type MessageLike = {
   id?: string
   type?: string
-  error?: unknown
+  error?: any
   finish?: unknown
   time?: { completed?: unknown }
+  content?: any[]
+  model?: { providerID?: string; id?: string }
+  providerID?: string
+  modelID?: string
 }
 
 type MessageList = {
