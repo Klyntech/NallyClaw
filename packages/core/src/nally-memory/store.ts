@@ -298,9 +298,9 @@ const COMMON_QUERY_WORDS = new Set([
 
 function lexicalQuery(query: string) {
   const terms = [...new Set(
-    query.toLowerCase().split(/[^\\p{L}\\p{N}_]+/u)
+    query.toLowerCase().split(/[^\p{L}\p{N}_]+/u)
       .filter((term) => term.length >= 2 && !COMMON_QUERY_WORDS.has(term))
-      .map((term) => term.replace(/[^\\p{L}\\p{N}_]/gu, ""))
+      .map((term) => term.replace(/[^\p{L}\p{N}_]/gu, ""))
       .filter(Boolean),
   )].slice(0, 8)
   return terms.map((term) => `${term}:*`).join(" | ")
