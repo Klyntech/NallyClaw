@@ -28,7 +28,7 @@ const voiceSessions = new Map<string, string>()
 const voiceProgress = new Map<string, string>()
 // Cache short, repeated voice fillers so ElevenLabs is only called once per phrase/voice/model.
 const speechCache = new Map<string, { audio: Uint8Array; contentType: string; cachedAt: number }>()
-const SPEECH_CACHE_MAX_ENTRIES = 48
+const SPEECH_CACHE_MAX_ENTRIES = 64
 const SPEECH_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHEABLE_VOICE_FILLERS = new Set([
   "I'm looking that up now.",
