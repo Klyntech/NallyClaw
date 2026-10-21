@@ -20,6 +20,7 @@ The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes on
 - `OPENCODE_SERVER_PASSWORD`: server API credential. Set as a Render secret; never commit or log it.
 - `PORT`: supplied by Render.
 - `RENDER_EXTERNAL_URL`: supplied by Render and used to register the public webhook.
+- `DATABASE_URL`: your existing Neon PostgreSQL connection string, set as a secret in Render. This enables durable Telegram session mappings, long-term memory, and the RAG store; see [memory and RAG](memory-and-rag.md). The runtime's main session/history database remains SQLite at this stage.
 
 Do not expose the existing agent/server API directly to the public internet. Keep webhook authentication and user allowlisting enabled, and retain the agent's existing permission/approval behavior.
 
