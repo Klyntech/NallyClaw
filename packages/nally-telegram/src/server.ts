@@ -25,6 +25,7 @@ const internalURL = `http://${host}:${internalPort}`
 const auth = `Basic ${btoa(`opencode:${password}`)}`
 const sessions = new Map<number, string>()
 const voiceSessions = new Map<string, string>()
+const voiceProgress = new Map<string, string>()
 const voiceAccessToken = process.env.NALLY_VOICE_ACCESS_TOKEN?.trim() ?? ""
 let voiceRateWindowStart = Date.now()
 let voiceRateCount = 0
@@ -304,6 +305,14 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     }
   }
 
+  if (pathname === "/api/voice/progress") {
+    let payload: { sessionId?: unknown }
+    try { payload = await request.json() as typeof payload } catch { return voiceJSON({ error: "invalid_json" }, 400) }
+    const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : ""
+    if (!voiceSessions.has(sessionId)) return voiceJSON({ error: "voice_session_not_found" }, 404)
+    return voiceJSON({ status: voiceProgress.get(sessionId) ?? "🤔 Thinking…" })
+  }
+
   if (pathname === "/api/voice/end") {
     let payload: { sessionId?: unknown }
     try {
@@ -311,7 +320,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     } catch {
       return voiceJSON({ error: "invalid_json" }, 400)
     }
-    if (typeof payload.sessionId === "string") voiceSessions.delete(payload.sessionId)
+    if (typeof payload.sessionId === "string") { voiceSessions.delete(payload.sessionId); voiceProgress.delete(payload.sessionId) }
     return voiceJSON({ ok: true })
   }
 
@@ -330,6 +339,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
       }
       const sessionId = crypto.randomUUID()
       voiceSessions.set(sessionId, agentSessionID)
+      voiceProgress.set(sessionId, "🤔 Thinking…")
       return voiceJSON({ sessionId })
     } catch {
       return voiceJSON({ error: "session_creation_failed" }, 502)
@@ -361,7 +371,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
       const { messages, userIndex } = await waitForAssistantMessage(
         () => api(`/api/session/${encodeURIComponent(agentSessionID)}/message?limit=200&order=desc`),
         userMessageID,
-        { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms) },
+        { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms), onProgress: (status) => { voiceProgress.set(sessionId, status) } },
       )
       const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
       for (const candidate of candidates) {
