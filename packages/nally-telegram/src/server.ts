@@ -103,7 +103,7 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
     const admitted = await api(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
       method: "POST",
       body: JSON.stringify({ text: message.text, metadata: { channel: "telegram", updateID: message.updateID } }),
-    })
+    }, 120_000)
     const userMessageID = admitted.data?.id
     if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
 
