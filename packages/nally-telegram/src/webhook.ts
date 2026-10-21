@@ -128,26 +128,28 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
         if (oldest !== undefined) seen.delete(oldest)
       }
 
-      try {
-        const reply = await options.onMessage({
+      // Acknowledge Telegram immediately. Model/provider calls can take longer than
+      // Telegram's webhook delivery window; doing the work in the request path
+      // causes retries and duplicate processing while the model is still running.
+      void Promise.resolve()
+        .then(() => options.onMessage({
           updateID: updateID!,
           chatID: chatID!,
           userID: userID!,
           text,
           username: message?.from?.username,
+        }))
+        .then((reply) => (reply?.trim() ? sendMessage(chatID!, reply) : undefined))
+        .catch(async (error) => {
+          // Keep internal exception details out of Telegram and HTTP responses.
+          console.error("Telegram message handling failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error))
+          try {
+            await sendMessage(chatID!, "I couldn't complete that request. Please try again.")
+          } catch (sendError) {
+            console.error("Telegram error reply failed", sendError instanceof Error ? `${sendError.name}: ${sendError.message}` : String(sendError))
+          }
         })
-        if (reply?.trim()) await sendMessage(chatID!, reply)
-        return Response.json({ ok: true })
-      } catch (error) {
-        // Keep internal exception details out of Telegram and HTTP responses.
-        console.error("Telegram message handling failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error))
-        try {
-          await sendMessage(chatID!, "I couldn't complete that request. Please try again.")
-        } catch (sendError) {
-          console.error("Telegram error reply failed", sendError instanceof Error ? `${sendError.name}: ${sendError.message}` : String(sendError))
-        }
-        return Response.json({ ok: true })
-      }
+      return Response.json({ ok: true, accepted: true })
     },
   }
 }
