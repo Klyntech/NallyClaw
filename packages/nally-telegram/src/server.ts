@@ -267,7 +267,8 @@ try {
   }
   const opencodeKeyStatus = credentialPresence("OPENCODE_API_KEY")
   const alternateZenKeyStatus = credentialPresence("OPENCODE_ZEN_API_KEY")
-  log(`AI config providerOverride=${process.env.NALLY_DEFAULT_PROVIDER?.trim() || "unset"}; model=${modelLabel}; OPENCODE_API_KEY=${opencodeKeyStatus}; OPENCODE_ZEN_API_KEY=${alternateZenKeyStatus}`)
+  const nvidiaKeyStatus = credentialPresence("NVIDIA_API_KEY")
+  log(`AI config providerOverride=${process.env.NALLY_DEFAULT_PROVIDER?.trim() || "unset"}; model=${modelLabel}; OPENCODE_API_KEY=${opencodeKeyStatus}; OPENCODE_ZEN_API_KEY=${alternateZenKeyStatus}; NVIDIA_API_KEY=${nvidiaKeyStatus}`)
   await waitForAgent()
   await registerWebhook()
   log(`HTTP listener ready on port ${port}`)
