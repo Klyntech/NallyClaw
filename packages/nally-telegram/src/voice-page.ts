@@ -128,6 +128,7 @@ async function sendTurn(text) {
         const response = await request("/api/voice/progress", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ sessionId }) });
         const data = await response.json();
         const current = String(data.status || "");
+        if (current && !ended) setState("thinking", current);
         if (current && current !== lastStatus && Date.now() - turnStarted >= 3200 && Date.now() - lastFillerAt >= 4500 && fillerCount < 3) {
           lastStatus = current;
           const filler = fillerForProgress(current);
