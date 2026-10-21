@@ -66,6 +66,18 @@ async function waitForAgent() {
   throw new Error("agent server did not become ready")
 }
 
+async function agentSessionExists(sessionID: string): Promise<boolean> {
+  try {
+    const response = await fetch(new URL(`/api/session/${encodeURIComponent(sessionID)}`, internalURL), {
+      headers: { authorization: auth },
+      signal: AbortSignal.timeout(5_000),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 function credentialPresence(name: string) {
   return process.env[name]?.trim() ? "present" : "missing"
 }
@@ -119,6 +131,9 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
     if (!sessionID) {
       stage = "restoring Telegram session"
       sessionID = await getTelegramSession(message.userID)
+      // The mapping lives in Neon, but the upstream runtime's session database may
+      // still be local SQLite. Never reuse a Neon mapping to a missing runtime session.
+      if (sessionID && !(await agentSessionExists(sessionID))) sessionID = undefined
       if (!sessionID) {
         stage = "creating session"
         const model = selectedModel()
