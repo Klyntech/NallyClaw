@@ -23,13 +23,13 @@ export type CompletedAssistantMessages = {
 function humanizeToolName(value: string) {
   const leaf = value.split(/[.:/]/).filter(Boolean).pop() ?? value
   const cleaned = leaf.replace(/^mcp__[^_]+__/, "").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim()
-  return cleaned ? cleaned.replace(/\b\w/g, (char) => char.toUpperCase()) : "Unknown"
+  return cleaned ? cleaned.replace(/\\b\\w/g, (char) => char.toUpperCase()) : "Unknown"
 }
 
 export function describeToolProgress(toolName: string): string {
   const name = toolName.toLowerCase().replace(/[^a-z0-9]+/g, "_")
   if (/(webfetch|^fetch$|fetch_page|fetch_url|fetchpage|open_url|scrape_page|read_url)/.test(name)) return "🌐 Fetching page…"
-  if (/(websearch|search_web|web_search|search_the_web|tavily|exa_search)/.test(name)) return "🔎 Searching the web…"
+  if (/(websearch|search_web|web_search|search_the_web|tavily|exa_search|parallel_search)/.test(name)) return "🔎 Searching the web…"
   if (/(read_page|reading_page|browser_read|open_page|page_content|browse_page|webopen|^open$)/.test(name)) return "📖 Reading page…"
   if (/(read_file|file_read|fetch_file|open_file|^read$|^cat$|view_file|cat_file)/.test(name)) return "📄 Reading file…"
   if (/(grep|glob|search_file|search_code|find_file|list_files|list_directory|codesearch)/.test(name)) return "🔎 Searching files…"
@@ -54,6 +54,15 @@ function activeToolProgress(message: MessageLike | undefined): string {
     if (name) return describeToolProgress(name)
   }
   return "🤔 Thinking…"
+}
+
+function isToolCallIteration(message: MessageLike | undefined) {
+  return String(message?.finish ?? "").toLowerCase() === "tool-calls"
+}
+
+function isCompletedAssistantIteration(message: MessageLike | undefined) {
+  return !!message && message.type === "assistant" &&
+    !!(message.time?.completed || message.error || message.finish)
 }
 
 export async function waitForAssistantMessage(
@@ -84,12 +93,13 @@ export async function waitForAssistantMessage(
       // the exact user message admitted by this Telegram update.
       const candidates = messages.slice(0, userIndex)
       const assistant = candidates.find((message) => message.type === "assistant")
-      if (assistant && (assistant.time?.completed || assistant.error || assistant.finish)) {
+      // An assistant iteration ending with "tool-calls" is not the final answer:
+      // the runtime still has to execute the tool and continue the same turn.
+      if (isCompletedAssistantIteration(assistant) && !isToolCallIteration(assistant)) {
         return { messages, userIndex }
       }
 
-      const activeAssistant = candidates.find((message) => message.type === "assistant")
-      const progress = activeToolProgress(activeAssistant)
+      const progress = activeToolProgress(assistant)
       if (progress !== lastProgress) {
         lastProgress = progress
         await options.onProgress?.(progress)
