@@ -15,19 +15,22 @@ function update(updateID: number, userID = 42, text = "hello") {
   }
 }
 
-function makeWebhook(onMessage: (message: { text: string; userID: number }) => Promise<string | void>) {
+function makeWebhook(onMessage: (message: { text: string; userID: number }, reportProgress: (status: string) => Promise<void>) => Promise<string | void>) {
   const sent: string[] = []
+  const methods: string[] = []
+  let nextMessageID = 100
   const webhook = createTelegramWebhook({
     token: "test-token",
     secret: SECRET,
     allowedUserIDs: new Set([42]),
     onMessage,
-    fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(String(init?.body ?? ""))
-      return Response.json({ ok: true })
+      methods.push(String(input).split("/").pop() ?? "")
+      return Response.json({ ok: true, result: { message_id: nextMessageID++ } })
     }) as typeof fetch,
   })
-  return { webhook, sent }
+  return { webhook, sent, methods }
 }
 
 describe("Telegram webhook", () => {
@@ -65,6 +68,30 @@ describe("Telegram webhook", () => {
     )
     expect(response.status).toBe(200)
     expect(called).toBe(false)
+  })
+
+  test("edits one progress message and sends a rich final reply", async () => {
+    const { webhook, sent, methods } = makeWebhook(async (_message, reportProgress) => {
+      await reportProgress("🤔 Thinking…")
+      await reportProgress("📄 Reading file…")
+      await reportProgress("📄 Reading file…")
+      return "## Result\n\n**Done**"
+    })
+    const response = await webhook.fetch(
+      new Request("https://example.test/telegram/webhook", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": SECRET },
+        body: JSON.stringify(update(22)),
+      }),
+    )
+    expect(response.status).toBe(200)
+    await Bun.sleep(20)
+
+    expect(methods).toEqual(["sendMessage", "editMessageText", "deleteMessage", "sendMessage"])
+    const finalPayload = JSON.parse(sent[sent.length - 1]!)
+    expect(finalPayload.parse_mode).toBe("HTML")
+    expect(finalPayload.text).toContain("<b>Result</b>")
+    expect(finalPayload.text).toContain("<b>Done</b>")
   })
 
   test("handles allowed messages and ignores duplicate update IDs", async () => {
