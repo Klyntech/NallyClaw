@@ -1,3 +1,122 @@
+const MAX_RICH_CHARS = 30_000
+
+function richFenceStart(line: string) {
+  const trimmed = line.trimStart()
+  if (trimmed.startsWith(TICK.repeat(3))) return TICK.repeat(3)
+  if (trimmed.startsWith("~~~")) return "~~~"
+  return ""
+}
+
+function richTableSeparator(line: string) {
+  return line.includes("|") && splitTableLine(line).every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s/g, "")))
+}
+
+function splitOversizedRichBlock(block: string): string[] {
+  const lines = block.split("\n")
+  const first = lines[0] ?? ""
+  const fenceMarker = richFenceStart(first)
+  if (fenceMarker && lines.length > 1 && (lines[lines.length - 1] ?? "").trimStart().startsWith(fenceMarker)) {
+    const close = lines[lines.length - 1] ?? fenceMarker
+    const body = lines.slice(1, -1)
+    const output: string[] = []
+    let current: string[] = []
+    for (const line of body) {
+      const pieces = splitLongText(line, MAX_RICH_CHARS - first.length - close.length - 10)
+      for (const piece of pieces) {
+        const candidate = current.length ? current.join("\n") + "\n" + piece : piece
+        if (candidate.length + first.length + close.length + 2 > MAX_RICH_CHARS && current.length) {
+          output.push(first + "\n" + current.join("\n") + "\n" + close)
+          current = [piece]
+        } else {
+          current.push(piece)
+        }
+      }
+    }
+    if (current.length || output.length === 0) output.push(first + "\n" + current.join("\n") + "\n" + close)
+    return output
+  }
+
+  if (lines.length >= 2 && lines[0]?.includes("|") && richTableSeparator(lines[1] ?? "")) {
+    const header = lines.slice(0, 2)
+    const output: string[] = []
+    let current = header.slice()
+    for (const row of lines.slice(2)) {
+      if (current.join("\n").length + row.length + 1 > MAX_RICH_CHARS - 100 && current.length > 2) {
+        output.push(current.join("\n"))
+        current = header.slice()
+      }
+      current.push(row)
+    }
+    if (current.length > 2 || output.length === 0) output.push(current.join("\n"))
+    return output
+  }
+
+  const output: string[] = []
+  let current = ""
+  for (const line of lines) {
+    for (const piece of splitLongText(line, MAX_RICH_CHARS - 100)) {
+      const candidate = current ? current + "\n" + piece : piece
+      if (candidate.length > MAX_RICH_CHARS && current) {
+        output.push(current)
+        current = piece
+      } else {
+        current = candidate
+      }
+    }
+  }
+  if (current) output.push(current)
+  return output
+}
+
+/**
+ * Keep Markdown intact for Telegram's Rich Messages API. Its native Markdown parser
+ * supports GFM-style tables, real heading blocks, and **bold** without custom conversion.
+ */
+export function splitTelegramRichMarkdown(markdown: string): string[] {
+  const lines = markdown.trim().split("\n")
+  const blocks: string[] = []
+  let current: string[] = []
+  let inFence = false
+  let fenceMarker = ""
+
+  const flush = () => {
+    if (current.length) blocks.push(current.join("\n"))
+    current = []
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trimStart()
+    const startingFence = richFenceStart(line)
+    current.push(line)
+    if (!inFence && startingFence) {
+      inFence = true
+      fenceMarker = startingFence
+    } else if (inFence && trimmed.startsWith(fenceMarker)) {
+      inFence = false
+      fenceMarker = ""
+    } else if (!inFence && !line.trim()) {
+      current.pop()
+      flush()
+    }
+  }
+  flush()
+
+  const expanded = blocks.flatMap((block) => block.length > MAX_RICH_CHARS ? splitOversizedRichBlock(block) : [block])
+  const output: string[] = []
+  let message = ""
+  for (const block of expanded) {
+    const candidate = message ? message + "\n\n" + block : block
+    if (candidate.length > MAX_RICH_CHARS && message) {
+      output.push(message)
+      message = block
+    } else {
+      message = candidate
+    }
+  }
+  if (message) output.push(message)
+  return output
+}
+
 const MAX_HTML_CHARS = 3500
 const TICK = String.fromCharCode(96)
 const TOKEN_START = "\uE000"
