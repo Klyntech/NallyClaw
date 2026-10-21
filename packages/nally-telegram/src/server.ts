@@ -81,22 +81,40 @@ function credentialPresence(name: string) {
 }
 
 function authFailureHint(error: any) {
-  const message = typeof error?.message === "string" ? error.message.toLowerCase() : ""
-  const status = typeof error?.status === "number"
-    ? error.status
-    : typeof error?.response?.status === "number" ? error.response.status : undefined
+  const reason = error?.reason ?? error?.data?.reason ?? error?.cause?.reason
+  const message = [
+    error?.message,
+    reason?.message,
+    error?.data?.message,
+    error?.cause?.message,
+  ].filter((value): value is string => typeof value === "string").join(" ").toLowerCase()
+  const status = [
+    error?.status,
+    error?.response?.status,
+    reason?.http?.status,
+    error?.http?.status,
+  ].find((value) => typeof value === "number")
 
-  // Deliberately classify only; never write provider response bodies or raw errors to logs.
+  // Return only a category; never log provider response bodies or raw errors.
   if (/not set|missing auth credential|missing credential|no api key|api key required|credential required/.test(message)) {
     return "missing-credential"
   }
-  if (status === 401 || /incorrect api key|invalid api key|unauthorized|authentication failed|invalid token/.test(message)) {
+  if (/model.{0,30}(disabled|not enabled|not available|no access)|disabled.{0,30}model/.test(message)) {
+    return "model-not-enabled"
+  }
+  if (/insufficient credits|no credits|billing|quota|usage limit|credits exhausted|payment required/.test(message)) {
+    return "account-limit-or-billing"
+  }
+  if (/invalid api key|incorrect api key|invalid token|expired key|revoked key/.test(message) || status === 401) {
     return "credential-rejected"
   }
-  if (status === 403 || /forbidden|not authorized|permission denied|access denied/.test(message)) {
-    return "access-denied-or-key-scope"
+  if (/unknown model|model not found|unsupported model/.test(message)) {
+    return "model-id-not-recognized"
   }
-  if (/quota|billing|usage limit|credits exhausted/.test(message)) return "account-limit"
+  if (/workspace|organization|permission|not authorized|access denied|forbidden/.test(message)) {
+    return "workspace-or-model-permission"
+  }
+  if (status === 403) return "provider-403-details-not-exposed"
   return "auth-details-unavailable"
 }
 
