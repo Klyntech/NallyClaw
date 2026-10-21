@@ -60,3 +60,24 @@ Do not commit these values to Git.
 - Missing provider configuration produces a safe, actionable UI error and does not break Telegram.
 - Tests cover authentication, token minting failures, malformed input, response errors, and session separation.
 - Deployment is not considered verified until a live browser call succeeds on Render.
+
+
+## Current implementation status
+
+The first browser MVP is now present on branch `nally/voice-first-web`:
+
+- `GET /` and `GET /voice` serve the browser call UI.
+- `POST /api/voice/deepgram-token` mints a short-lived Deepgram token.
+- `POST /api/voice/session` creates a separate OpenCode-derived session for the browser call.
+- `POST /api/voice/message` submits a finalized transcript to that session and waits past tool-call iterations for the final answer.
+- `POST /api/voice/speech` proxies ElevenLabs streaming TTS without exposing the provider key.
+- Voice APIs require `Authorization: Bearer <NALLY_VOICE_ACCESS_TOKEN>`.
+- The page captures microphone audio, streams 16 kHz linear PCM to Deepgram, shows the transcript, and plays generated speech.
+
+## Current limitations / next verification
+
+- This is turn-based voice, not yet full-duplex interruption: the microphone stream is suppressed while Nally is thinking or speaking. Barge-in and sentence-by-sentence speech streaming are follow-up work.
+- Voice session mappings are in memory and are lost on restart.
+- The access token is a shared service secret entered by the user; it is not a per-user identity system. Rotate it if exposed.
+- Browser microphone access requires HTTPS (Render provides this) or localhost.
+- No tests, typecheck, browser test, or live Render call have been verified yet. Do not treat this branch as production-ready until those pass.
