@@ -292,7 +292,19 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     }
   }
 
+  if (pathname === "/api/voice/end") {
+    let payload: { sessionId?: unknown }
+    try {
+      payload = await request.json() as typeof payload
+    } catch {
+      return voiceJSON({ error: "invalid_json" }, 400)
+    }
+    if (typeof payload.sessionId === "string") voiceSessions.delete(payload.sessionId)
+    return voiceJSON({ ok: true })
+  }
+
   if (pathname === "/api/voice/session") {
+    if (voiceSessions.size >= 100) return voiceJSON({ error: "too_many_voice_sessions" }, 429)
     try {
       await waitForAgent()
       const model = selectedModel()
