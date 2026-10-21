@@ -26,6 +26,8 @@ const auth = `Basic ${btoa(`opencode:${password}`)}`
 const sessions = new Map<number, string>()
 const voiceSessions = new Map<string, string>()
 const voiceAccessToken = process.env.NALLY_VOICE_ACCESS_TOKEN?.trim() ?? ""
+let voiceRateWindowStart = Date.now()
+let voiceRateCount = 0
 
 function log(message: string, error?: unknown) {
   // Never log credentials, webhook URLs containing tokens, or raw Telegram payloads.
@@ -268,6 +270,16 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     return voiceJSON({ error: voiceAccessToken ? "unauthorized" : "voice_not_configured" }, voiceAccessToken ? 401 : 503)
   }
 
+  const now = Date.now()
+  if (now - voiceRateWindowStart >= 60_000) {
+    voiceRateWindowStart = now
+    voiceRateCount = 0
+  }
+  if (voiceRateCount >= 90) return voiceJSON({ error: "voice_rate_limit_exceeded" }, 429)
+  voiceRateCount++
+
+  const contentLength = Number(request.headers.get("content-length") ?? 0)
+  if (contentLength > 16_384) return voiceJSON({ error: "request_too_large" }, 413)
   if (request.method !== "POST") return voiceJSON({ error: "method_not_allowed" }, 405)
 
   if (pathname === "/api/voice/deepgram-token") {
