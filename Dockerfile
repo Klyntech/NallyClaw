@@ -1,20 +1,18 @@
-# NalClaw runtime image for Render.
+# NallyClaw Telegram-first runtime for Render.
 FROM oven/bun:1.4.2
 
 WORKDIR /app
 
-# The project is a Bun workspace monorepo; workspace manifests and root config
-# files are required by package resolution, so keep the repository as context.
+# Keep the complete Bun workspace available for package resolution.
 COPY . .
 
-# The checked-in workspace lockfile currently disagrees with package manifests.
-# Resolve dependencies in the image until the lockfile can be regenerated and
-# committed from a full checkout.
+# Temporary until the checked-in workspace lockfile is reconciled.
 RUN bun install
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 EXPOSE 3000
 
-# Render injects PORT at runtime. Start the existing HTTP server, not the TUI.
-CMD ["sh", "-c", "bun run --cwd packages/cli src/index.ts serve --hostname 0.0.0.0 --port ${PORT:-3000}"]
+# Public port only serves health + the authenticated Telegram webhook.
+# The OpenCode agent API runs on loopback on a separate internal port.
+CMD ["bun", "run", "packages/nally-telegram/src/server.ts"]
