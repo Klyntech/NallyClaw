@@ -23,7 +23,7 @@ export type CompletedAssistantMessages = {
 function humanizeToolName(value: string) {
   const leaf = value.split(/[.:/]/).filter(Boolean).pop() ?? value
   const cleaned = leaf.replace(/^mcp__[^_]+__/, "").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim()
-  return cleaned ? cleaned.replace(/\\b\\w/g, (char) => char.toUpperCase()) : "Unknown"
+  return cleaned ? cleaned.replace(/\b\w/g, (char) => char.toUpperCase()) : "Unknown"
 }
 
 export function describeToolProgress(toolName: string): string {
