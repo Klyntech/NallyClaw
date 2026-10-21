@@ -52,6 +52,9 @@ function splitMessage(text: string) {
 export function createTelegramWebhook(options: TelegramWebhookOptions) {
   if (!options.token.trim()) throw new Error("TELEGRAM_BOT_TOKEN is required")
   if (!options.secret.trim()) throw new Error("TELEGRAM_WEBHOOK_SECRET is required")
+  if (options.secret.length > 256 || !/^[A-Za-z0-9_-]+$/.test(options.secret)) {
+    throw new Error("TELEGRAM_WEBHOOK_SECRET must use only letters, numbers, underscores, or hyphens (max 256 characters)")
+  }
   if (options.allowedUserIDs.size === 0) throw new Error("At least one Telegram user ID must be allowlisted")
 
   const request = options.fetch ?? fetch
@@ -83,6 +86,11 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
       const suppliedSecret = request.headers.get("x-telegram-bot-api-secret-token") ?? ""
       if (!safeEqual(suppliedSecret, options.secret)) {
         return Response.json({ error: "unauthorized" }, { status: 401 })
+      }
+
+      const contentLength = Number(request.headers.get("content-length") ?? 0)
+      if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
+        return Response.json({ error: "payload_too_large" }, { status: 413 })
       }
 
       let update: TelegramUpdate
