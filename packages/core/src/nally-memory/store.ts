@@ -134,19 +134,25 @@ async function ensureSchema() {
   await schemaPromise
 }
 
-type EmbeddingConfig = { model: string; apiKey: string; baseURL: string }
+type EmbeddingConfig = { model: string; apiKey: string; baseURL: string; dimensions?: number }
 
 function embeddingConfig(): EmbeddingConfig | undefined {
-  const model = process.env.NALLY_EMBEDDING_MODEL?.trim()
+  const model = process.env.NVIDIA_EMBED_MODEL?.trim() || process.env.NALLY_EMBEDDING_MODEL?.trim()
   const apiKey = process.env.NVIDIA_API_KEY?.trim()
+  const rawDimensions = process.env.NVIDIA_EMBED_DIM?.trim()
+  const dimensions = rawDimensions ? Number(rawDimensions) : undefined
   if (!model || !apiKey) return
+  if (dimensions !== undefined && (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > 8192)) {
+    console.warn("[nally-memory] NVIDIA_EMBED_DIM must be an integer between 1 and 8192; ignoring configured dimension.")
+    return
+  }
   return {
     model,
     apiKey,
-    baseURL: (process.env.NALLY_EMBEDDING_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1").replace(/\/+$/, ""),
+    dimensions,
+    baseURL: (process.env.NALLY_EMBEDDING_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1").replace(/\\/+$/, ""),
   }
 }
-
 async function embed(text: string, mode: EmbeddingMode): Promise<{ values: number[]; model: string } | undefined> {
   const config = embeddingConfig()
   if (!config) return
@@ -165,6 +171,9 @@ async function embed(text: string, mode: EmbeddingMode): Promise<{ values: numbe
   const values = payload.data?.[0]?.embedding
   if (!Array.isArray(values) || values.length === 0 || values.some((n) => !Number.isFinite(n))) {
     throw new Error("The configured embedding model returned an invalid embedding.")
+  }
+  if (config.dimensions !== undefined && values.length !== config.dimensions) {
+    throw new Error(`Embedding model returned ${values.length} dimensions, but NVIDIA_EMBED_DIM is set to ${config.dimensions}. Check the model output dimension.`)
   }
   return { values, model: config.model }
 }
