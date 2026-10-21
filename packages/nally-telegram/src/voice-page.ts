@@ -49,7 +49,7 @@ body[data-state="listening"] .ring{animation:pulse 2s ease-out infinite}body[dat
 (() => {
 const $ = (id) => document.getElementById(id);
 const status = $("status"), transcript = $("transcript"), start = $("start"), mute = $("mute"), end = $("end"), access = $("access");
-let media, audioContext, source, processor, socket, sessionId, muted = false, busy = false, ended = true, utterance = "", lastFinal = "", speakingAudio;
+let media, audioContext, source, processor, socket, sessionId, muted = false, busy = false, ended = true, utterance = "", speakingAudio;
 const setState = (state, label) => { document.body.dataset.state = state; status.textContent = label; };
 const authHeaders = () => ({ "authorization": "Bearer " + access.value.trim() });
 async function request(path, options = {}) {
@@ -113,8 +113,8 @@ function onTranscript(event) {
   if (data.is_final) utterance += (utterance ? " " : "") + text;
   if (data.speech_final) {
     const finalText = (utterance || text).trim(); utterance = "";
-    if (finalText && finalText !== lastFinal) { lastFinal = finalText; void sendTurn(finalText); }
-  } else if (!data.is_final) setState(busy ? "thinking" : "listening", busy ? "Nally is working… (keep speaking)" : "Hearing: " + text);
+    if (finalText) void sendTurn(finalText);
+  } else if (!data.is_final) setState(busy ? "thinking" : "listening", busy ? "Nally is working…" : "Hearing: " + text);
 }
 async function begin() {
   if (!access.value.trim()) { access.focus(); setState("idle", "Enter your voice access token in Connection settings first."); return; }
@@ -145,7 +145,7 @@ async function begin() {
       socket.send(pcm.buffer);
     };
     source.connect(processor); processor.connect(audioContext.destination);
-    ended = false; muted = false; busy = false; utterance = ""; lastFinal = "";
+    ended = false; muted = false; busy = false; utterance = "";
     start.hidden = true; mute.disabled = false; end.disabled = false; mute.textContent = "Mute mic";
     setState("listening", "Listening… speak naturally");
   } catch (error) {
