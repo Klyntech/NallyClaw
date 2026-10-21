@@ -115,23 +115,32 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
     const messages = Array.isArray(result.data) ? result.data : []
     const userIndex = messages.findIndex((item: any) => item.id === userMessageID)
     const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
+    const assistantDiagnostics: string[] = []
     for (const candidate of candidates) {
-      if (candidate.type !== "assistant" || candidate.error) continue
-      const text = Array.isArray(candidate.content)
-        ? candidate.content
-            .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-            .map((part: any) => part.text)
-            .join("")
-            .trim()
-        : ""
-      if (text) {
+      if (candidate.type !== "assistant") continue
+      const parts = Array.isArray(candidate.content) ? candidate.content : []
+      const text = parts
+        .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+        .map((part: any) => part.text)
+        .join("")
+        .trim()
+      if (text && !candidate.error) {
         log(`message completed in ${Date.now() - startedAt}ms`)
         return text
       }
+
+      // Log structure only: never emit prompt text, model output, credentials, or raw provider errors.
+      const error = candidate.error
+      const errorKind = error && typeof error === "object"
+        ? String(error.name ?? error.type ?? error.code ?? "present").slice(0, 60)
+        : error ? "present" : "none"
+      assistantDiagnostics.push(
+        `error=${errorKind};provider=${String(candidate.providerID ?? "unknown").slice(0, 60)};model=${String(candidate.modelID ?? "unknown").slice(0, 80)};parts=${parts.map((part: any) => String(part?.type ?? "unknown")).slice(0, 12).join("/") || "none"}`,
+      )
     }
 
     const newestTypes = messages.slice(0, 8).map((item: any) => item?.type ?? "unknown").join(",")
-    log(`completed turn has no assistant text (user message found: ${userIndex >= 0}; newest types: ${newestTypes || "none"})`)
+    log(`completed turn has no assistant text (user message found: ${userIndex >= 0}; newest types: ${newestTypes || "none"}; assistant diagnostics: ${assistantDiagnostics.slice(0, 4).join(" | ") || "none"})`)
     return "I couldn't get a text response from the model. Please try again; if this keeps happening, the model/provider configuration needs checking."
   } catch (error) {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
