@@ -187,7 +187,8 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
         .map((part: any) => part.text)
         .join("")
         .trim()
-      // Tool-call iterations can contain user-facing commentary, but are not the final answer.\n      if (text && !candidate.error && String(candidate.finish ?? "").toLowerCase() !== "tool-calls") {
+      // Tool-call iterations can contain user-facing commentary, but are not the final answer.
+      if (text && !candidate.error && String(candidate.finish ?? "").toLowerCase() !== "tool-calls") {
         log(`message completed in ${Date.now() - startedAt}ms`)
         return text
       }
