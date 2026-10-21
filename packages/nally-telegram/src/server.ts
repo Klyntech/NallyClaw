@@ -30,6 +30,21 @@ const voiceProgress = new Map<string, string>()
 const speechCache = new Map<string, { audio: Uint8Array; contentType: string; cachedAt: number }>()
 const SPEECH_CACHE_MAX_ENTRIES = 48
 const SPEECH_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const CACHEABLE_VOICE_FILLERS = new Set([
+  "I'm looking that up now.",
+  "I'm opening that page now.",
+  "Let me go through the page.",
+  "Let me inspect the file first.",
+  "I'm checking the relevant files.",
+  "I'm making that change now.",
+  "I'm writing that out now.",
+  "I'm running that and checking the result.",
+  "Let me check what I have in memory.",
+  "I'm splitting up part of the work to check it carefully.",
+  "I'm using a tool to check that.",
+  "Let me work through this.",
+  "I'm working through that now.",
+])
 const voiceAccessToken = process.env.NALLY_VOICE_ACCESS_TOKEN?.trim() ?? ""
 let voiceRateWindowStart = Date.now()
 let voiceRateCount = 0
@@ -405,12 +420,13 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
     try {
       const modelID = process.env.ELEVENLABS_TTS_MODEL?.trim() || "eleven_flash_v2_5"
+      const cacheable = CACHEABLE_VOICE_FILLERS.has(text)
       const cacheKey = `${voiceID}\u0000${modelID}\u0000mp3_22050_32\u0000${text}`
       const now = Date.now()
       for (const [key, entry] of speechCache) {
         if (now - entry.cachedAt > SPEECH_CACHE_TTL_MS) speechCache.delete(key)
       }
-      let cached = speechCache.get(cacheKey)
+      let cached = cacheable ? speechCache.get(cacheKey) : undefined
       if (cached) {
         // LRU: refresh insertion order on reuse.
         speechCache.delete(cacheKey)
@@ -430,9 +446,14 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
         log(`ElevenLabs speech request failed (HTTP ${response.status})`)
         return voiceJSON({ error: "speech_generation_failed" }, 502)
       }
+      const contentType = response.headers.get("content-type") || "audio/mpeg"
+      // Only cache the fixed, non-personal progress phrases; never retain arbitrary assistant replies.
+      if (!cacheable) {
+        return new Response(response.body, { headers: { "content-type": contentType, "cache-control": "no-store", "x-content-type-options": "nosniff" } })
+      }
       const audio = new Uint8Array(await response.arrayBuffer())
-      if (audio.byteLength > 2_000_000) return new Response(audio, { headers: { "content-type": response.headers.get("content-type") || "audio/mpeg", "cache-control": "no-store", "x-content-type-options": "nosniff" } })
-      cached = { audio, contentType: response.headers.get("content-type") || "audio/mpeg", cachedAt: now }
+      if (audio.byteLength > 2_000_000) return new Response(audio, { headers: { "content-type": contentType, "cache-control": "no-store", "x-content-type-options": "nosniff" } })
+      cached = { audio, contentType, cachedAt: now }
       speechCache.set(cacheKey, cached)
       while (speechCache.size > SPEECH_CACHE_MAX_ENTRIES) {
         const oldest = speechCache.keys().next().value
