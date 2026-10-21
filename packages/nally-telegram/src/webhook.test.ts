@@ -87,11 +87,10 @@ describe("Telegram webhook", () => {
     expect(response.status).toBe(200)
     await Bun.sleep(20)
 
-    expect(methods).toEqual(["sendMessage", "editMessageText", "deleteMessage", "sendMessage"])
+    expect(methods).toEqual(["sendMessage", "editMessageText", "deleteMessage", "sendRichMessage"])
     const finalPayload = JSON.parse(sent[sent.length - 1]!)
-    expect(finalPayload.parse_mode).toBe("HTML")
-    expect(finalPayload.text).toContain("<b>Result</b>")
-    expect(finalPayload.text).toContain("<b>Done</b>")
+    expect(finalPayload.rich_message.markdown).toContain("## Result")
+    expect(finalPayload.rich_message.markdown).toContain("**Done**")
   })
 
   test("handles allowed messages and ignores duplicate update IDs", async () => {
@@ -113,6 +112,6 @@ describe("Telegram webhook", () => {
     await Bun.sleep(10)
     expect(sent).toHaveLength(1)
     expect(JSON.parse(sent[0]!).chat_id).toBe(42)
-    expect(JSON.parse(sent[0]!).text).toBe("reply: hello")
+    expect(JSON.parse(sent[0]!).rich_message.markdown).toBe("reply: hello")
   })
 })
