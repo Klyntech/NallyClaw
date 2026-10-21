@@ -28,9 +28,9 @@ function humanizeToolName(value: string) {
 
 export function describeToolProgress(toolName: string): string {
   const name = toolName.toLowerCase().replace(/[^a-z0-9]+/g, "_")
-  if (/(webfetch|fetch_page|fetch_url|fetchpage|open_url|scrape_page|read_url)/.test(name)) return "🌐 Fetching page…"
+  if (/(webfetch|^fetch$|fetch_page|fetch_url|fetchpage|open_url|scrape_page|read_url)/.test(name)) return "🌐 Fetching page…"
   if (/(websearch|search_web|web_search|search_the_web|tavily|exa_search)/.test(name)) return "🔎 Searching the web…"
-  if (/(read_page|browser_read|open_page|page_content|browse_page)/.test(name)) return "📖 Reading page…"
+  if (/(read_page|reading_page|browser_read|open_page|page_content|browse_page|webopen|^open$)/.test(name)) return "📖 Reading page…"
   if (/(read_file|file_read|^read$|view_file|cat_file)/.test(name)) return "📄 Reading file…"
   if (/(grep|glob|search_file|search_code|find_file|list_files|codesearch)/.test(name)) return "🔎 Searching files…"
   if (/(edit|patch|replace_file|apply_patch)/.test(name)) return "✏️ Editing file…"
@@ -43,7 +43,7 @@ export function describeToolProgress(toolName: string): string {
 }
 
 function activeToolProgress(message: MessageLike | undefined): string {
-  if (!message) return "🧠 Thinking…"
+  if (!message) return "🤔 Thinking…"
   const parts = Array.isArray(message.content) ? message.content : Array.isArray(message.parts) ? message.parts : []
   for (let index = parts.length - 1; index >= 0; index--) {
     const part = parts[index]
@@ -53,7 +53,7 @@ function activeToolProgress(message: MessageLike | undefined): string {
     const name = String(part.tool ?? part.name ?? part.state?.title ?? "")
     if (name) return describeToolProgress(name)
   }
-  return "🧠 Thinking…"
+  return "🤔 Thinking…"
 }
 
 export async function waitForAssistantMessage(
