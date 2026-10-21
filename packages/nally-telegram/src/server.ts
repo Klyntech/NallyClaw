@@ -76,6 +76,30 @@ function selectedModel() {
   return { providerID, id }
 }
 
+function credentialPresence(name: string) {
+  return process.env[name]?.trim() ? "present" : "missing"
+}
+
+function authFailureHint(error: any) {
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : ""
+  const status = typeof error?.status === "number"
+    ? error.status
+    : typeof error?.response?.status === "number" ? error.response.status : undefined
+
+  // Deliberately classify only; never write provider response bodies or raw errors to logs.
+  if (/not set|missing auth credential|missing credential|no api key|opencode_api_key/.test(message)) {
+    return "missing-credential"
+  }
+  if (status === 401 || /incorrect api key|invalid api key|unauthorized|authentication failed|invalid token/.test(message)) {
+    return "credential-rejected"
+  }
+  if (status === 403 || /forbidden|not authorized|permission denied|access denied/.test(message)) {
+    return "access-denied-or-key-scope"
+  }
+  if (/quota|billing|usage limit|credits exhausted/.test(message)) return "account-limit"
+  return "auth-details-unavailable"
+}
+
 async function onMessage(message: TelegramTextMessage): Promise<string> {
   let stage = "waiting for agent readiness"
   const startedAt = Date.now()
@@ -134,13 +158,20 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
       const errorKind = error && typeof error === "object"
         ? String(error.name ?? error.type ?? error.code ?? "present").slice(0, 60)
         : error ? "present" : "none"
+      const status = typeof error?.status === "number" ? error.status : "unknown"
+      const authHint = error && typeof error === "object" && String(error.type ?? "").startsWith("provider.auth")
+        ? `;authHint=${authFailureHint(error)}`
+        : ""
       assistantDiagnostics.push(
-        `error=${errorKind};provider=${String(candidate.providerID ?? "unknown").slice(0, 60)};model=${String(candidate.modelID ?? "unknown").slice(0, 80)};parts=${parts.map((part: any) => String(part?.type ?? "unknown")).slice(0, 12).join("/") || "none"}`,
+        `error=${errorKind};status=${status}${authHint};provider=${String(candidate.providerID ?? "unknown").slice(0, 60)};model=${String(candidate.modelID ?? "unknown").slice(0, 80)};parts=${parts.map((part: any) => String(part?.type ?? "unknown")).slice(0, 12).join("/") || "none"}`,
       )
     }
 
     const newestTypes = messages.slice(0, 8).map((item: any) => item?.type ?? "unknown").join(",")
     log(`completed turn has no assistant text (user message found: ${userIndex >= 0}; newest types: ${newestTypes || "none"}; assistant diagnostics: ${assistantDiagnostics.slice(0, 4).join(" | ") || "none"})`)
+    if (assistantDiagnostics.some((item) => item.includes("error=provider.auth"))) {
+      return "Nally couldn't authenticate with the configured AI provider. The service now records a safe diagnostic; check the provider's API key and model access in Render."
+    }
     return "I couldn't get a text response from the model. Please try again; if this keeps happening, the model/provider configuration needs checking."
   } catch (error) {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
@@ -208,6 +239,11 @@ async function registerWebhook() {
 }
 
 try {
+  const configuredModel = process.env.NALLY_DEFAULT_MODEL?.trim() || process.env.OPENCODE_MODEL?.trim()
+  const explicitModel = selectedModel()
+  const opencodeKeyStatus = credentialPresence("OPENCODE_API_KEY")
+  const alternateZenKeyStatus = credentialPresence("OPENCODE_ZEN_API_KEY")
+  log(`AI config providerOverride=${process.env.NALLY_DEFAULT_PROVIDER?.trim() || "unset"}; model=${explicitModel ? `${explicitModel.providerID}/${explicitModel.id}` : configuredModel ? "invalid-or-unresolved" : "automatic (no model env set)"}; OPENCODE_API_KEY=${opencodeKeyStatus}; OPENCODE_ZEN_API_KEY=${alternateZenKeyStatus}`)
   await waitForAgent()
   await registerWebhook()
   log(`HTTP listener ready on port ${port}`)
