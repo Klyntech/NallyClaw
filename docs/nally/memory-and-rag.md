@@ -8,10 +8,12 @@ Set these in the NallyClaw Render service's environment settings. Never commit s
 
 - `DATABASE_URL`: recommended Neon PostgreSQL connection string. The accepted names, in lookup priority, are `NALLY_DATABASE_URL`, then `DATABASE_URL`, then `NEON_DATABASE_URL`.
 - `NVIDIA_API_KEY`: NVIDIA API key. The same variable may be used by the configured chat model and the embeddings API.
-- `NALLY_EMBEDDING_MODEL`: leave unset until the desired NVIDIA embedding model is selected.
+- `NVIDIA_EMBED_MODEL`: `nvidia/llama-nemotron-embed-vl-1b-v2` (preferred model variable; falls back to `NALLY_EMBEDDING_MODEL` if unset).
+- `NVIDIA_EMBED_DIM`: `2048` (expected output size; Nally checks returned vectors against this value).
+- `NALLY_EMBEDDING_MODEL`: legacy/fallback name for the embedding model.
 - `NALLY_EMBEDDING_BASE_URL`: optional API base URL; defaults to `https://integrate.api.nvidia.com/v1`.
 
-Embedding calls use the OpenAI-compatible `POST /embeddings` endpoint, and send `input_type: "query"` for retrieval queries and `input_type: "passage"` for stored memories/document chunks. Verify the chosen NVIDIA model supports this request format before enabling it. If no embedding model is configured or embedding calls fail, saved text still works and retrieval falls back to lexical matching.
+Embedding calls use the OpenAI-compatible `POST /embeddings` endpoint, with `input_type: "query"` for retrieval queries and `input_type: "passage"` for stored memories/document chunks. Nally checks that returned vectors match `NVIDIA_EMBED_DIM`; confirm the selected model supports this request format and returns 2048 dimensions. If no embedding model is configured or embedding calls fail, saved text still works and retrieval falls back to lexical matching.
 
 ## Memory tools
 
