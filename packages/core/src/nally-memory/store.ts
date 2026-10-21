@@ -214,7 +214,7 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
   const inserted = await sql`
     INSERT INTO nally_telegram_sessions (telegram_user_id, session_id)
     VALUES (${String(userID)}, ${sessionID})
-    ON CONFLICT (telegram_user_id) DO NOTHING
+    ON CONFLICT (telegram_user_id) DO UPDATE SET session_id = EXCLUDED.session_id, updated_at = now()
     RETURNING session_id
   `
   if (typeof inserted[0]?.session_id === "string") {
@@ -295,9 +295,9 @@ async function lexicalMemories(db: Sql, ownerKey: string, query: string, limit: 
     WHERE owner_key = ${ownerKey}
       AND forgotten_at IS NULL
       AND (
-        content ILIKE ${match} ESCAPE '\\'
-        OR tags_json::text ILIKE ${match} ESCAPE '\\'
-        OR category ILIKE ${match} ESCAPE '\\'
+        content ILIKE ${match}
+        OR tags_json::text ILIKE ${match}
+        OR category ILIKE ${match}
       )
     ORDER BY importance DESC, updated_at DESC
     LIMIT ${limit}
@@ -568,7 +568,7 @@ export async function searchKnowledge(sessionID: string, query: string, limit = 
     FROM nally_document_chunks c
     JOIN nally_documents d ON d.id = c.document_id
     WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-      AND (c.content ILIKE ${match} ESCAPE '\\' OR d.title ILIKE ${match} ESCAPE '\\' OR COALESCE(d.source, '') ILIKE ${match} ESCAPE '\\')
+      AND (c.content ILIKE ${match} OR d.title ILIKE ${match} OR COALESCE(d.source, '') ILIKE ${match})
     ORDER BY d.updated_at DESC, c.chunk_index ASC
     LIMIT ${max}
   `
@@ -657,7 +657,7 @@ async function retrieveKnowledgeRows(db: Sql, ownerKey: string, query: string, l
     SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content
     FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
     WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-      AND (c.content ILIKE ${match} ESCAPE '\\' OR d.title ILIKE ${match} ESCAPE '\\')
+      AND (c.content ILIKE ${match} OR d.title ILIKE ${match})
     ORDER BY d.updated_at DESC, c.chunk_index ASC LIMIT ${limit}
   `
 }
