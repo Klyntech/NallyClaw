@@ -287,18 +287,46 @@ function clampLimit(limit = 5, max = 20) {
 const vectorLiteral = (values: number[]) => `[${values.join(",")}]`
 const pattern = (query: string) => `%${query.trim().slice(0, 200)}%`
 
+const COMMON_QUERY_WORDS = new Set([
+  "a", "about", "after", "again", "all", "am", "an", "and", "any", "are", "as", "at", "be", "been",
+  "before", "being", "but", "by", "can", "could", "did", "do", "does", "for", "from", "get", "give",
+  "had", "has", "have", "he", "her", "here", "how", "i", "if", "in", "into", "is", "it", "its", "just",
+  "know", "me", "my", "of", "on", "or", "our", "please", "say", "she", "should", "so", "tell", "than",
+  "that", "the", "their", "them", "then", "there", "these", "they", "this", "to", "us", "was", "we",
+  "were", "what", "when", "where", "which", "who", "why", "will", "with", "would", "you", "your",
+])
+
+function lexicalQuery(query: string) {
+  const terms = [...new Set(
+    query.toLowerCase().split(/[^\\p{L}\\p{N}_]+/u)
+      .filter((term) => term.length >= 2 && !COMMON_QUERY_WORDS.has(term))
+      .map((term) => term.replace(/[^\\p{L}\\p{N}_]/gu, ""))
+      .filter(Boolean),
+  )].slice(0, 8)
+  return terms.map((term) => `${term}:*`).join(" | ")
+}
+
 async function lexicalMemories(db: Sql, ownerKey: string, query: string, limit: number) {
+  const fts = lexicalQuery(query)
+  if (fts) {
+    return await db`
+      SELECT id, category, content, tags_json, importance, created_at, updated_at,
+        ts_rank(to_tsvector('simple', content || ' ' || tags_json::text || ' ' || category), to_tsquery('simple', ${fts}))::float8 AS score
+      FROM nally_memories
+      WHERE owner_key = ${ownerKey}
+        AND forgotten_at IS NULL
+        AND to_tsvector('simple', content || ' ' || tags_json::text || ' ' || category) @@ to_tsquery('simple', ${fts})
+      ORDER BY score DESC, importance DESC, updated_at DESC
+      LIMIT ${limit}
+    `
+  }
   const match = pattern(query)
   return await db`
     SELECT id, category, content, tags_json, importance, created_at, updated_at
     FROM nally_memories
     WHERE owner_key = ${ownerKey}
       AND forgotten_at IS NULL
-      AND (
-        content ILIKE ${match}
-        OR tags_json::text ILIKE ${match}
-        OR category ILIKE ${match}
-      )
+      AND (content ILIKE ${match} OR tags_json::text ILIKE ${match} OR category ILIKE ${match})
     ORDER BY importance DESC, updated_at DESC
     LIMIT ${limit}
   `
@@ -458,8 +486,8 @@ export async function forgetMemory(sessionID: string, memoryID: string) {
   await ensureSchema()
   const ownerKey = await ownerForSession(sessionID)
   const rows = await sql`
-    UPDATE nally_memories SET forgotten_at = now(), updated_at = now()
-    WHERE id = ${memoryID} AND owner_key = ${ownerKey} AND forgotten_at IS NULL
+    DELETE FROM nally_memories
+    WHERE id = ${memoryID} AND owner_key = ${ownerKey}
     RETURNING id
   `
   return { forgotten: rows.length > 0, id: memoryID }
@@ -562,16 +590,27 @@ export async function searchKnowledge(sessionID: string, query: string, limit = 
       .slice(0, max)
     if (ranked.length) return ranked.map(knowledgeItem)
   }
-  const match = pattern(query)
-  const rows = await db`
-    SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content
-    FROM nally_document_chunks c
-    JOIN nally_documents d ON d.id = c.document_id
-    WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-      AND (c.content ILIKE ${match} OR d.title ILIKE ${match} OR COALESCE(d.source, '') ILIKE ${match})
-    ORDER BY d.updated_at DESC, c.chunk_index ASC
-    LIMIT ${max}
-  `
+  const fts = lexicalQuery(query)
+  const rows = fts
+    ? await db`
+        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
+          ts_rank(to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')), to_tsquery('simple', ${fts}))::float8 AS score
+        FROM nally_document_chunks c
+        JOIN nally_documents d ON d.id = c.document_id
+        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+          AND to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')) @@ to_tsquery('simple', ${fts})
+        ORDER BY score DESC, d.updated_at DESC, c.chunk_index ASC
+        LIMIT ${max}
+      `
+    : await db`
+        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content
+        FROM nally_document_chunks c
+        JOIN nally_documents d ON d.id = c.document_id
+        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+          AND (c.content ILIKE ${pattern(query)} OR d.title ILIKE ${pattern(query)} OR COALESCE(d.source, '') ILIKE ${pattern(query)})
+        ORDER BY d.updated_at DESC, c.chunk_index ASC
+        LIMIT ${max}
+      `
   return rows.map(knowledgeItem)
 }
 
@@ -604,8 +643,8 @@ export async function forgetKnowledge(sessionID: string, documentID: string) {
   await ensureSchema()
   const ownerKey = await ownerForSession(sessionID)
   const rows = await sql`
-    UPDATE nally_documents SET deleted_at = now(), updated_at = now()
-    WHERE id = ${documentID} AND owner_key = ${ownerKey} AND deleted_at IS NULL
+    DELETE FROM nally_documents
+    WHERE id = ${documentID} AND owner_key = ${ownerKey}
     RETURNING id
   `
   return { forgotten: rows.length > 0, id: documentID }
@@ -651,6 +690,17 @@ async function retrieveKnowledgeRows(db: Sql, ownerKey: string, query: string, l
       .sort((a: any, b: any) => b.similarity - a.similarity)
       .slice(0, limit)
     if (ranked.length) return ranked
+  }
+  const fts = lexicalQuery(query)
+  if (fts) {
+    return await db`
+      SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
+        ts_rank(to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')), to_tsquery('simple', ${fts}))::float8 AS score
+      FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
+      WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+        AND to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')) @@ to_tsquery('simple', ${fts})
+      ORDER BY score DESC, d.updated_at DESC, c.chunk_index ASC LIMIT ${limit}
+    `
   }
   const match = pattern(query)
   return await db`
