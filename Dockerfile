@@ -7,7 +7,10 @@ WORKDIR /app
 # files are required by package resolution, so keep the repository as context.
 COPY . .
 
-RUN bun install --frozen-lockfile
+# The checked-in workspace lockfile currently disagrees with package manifests.
+# Resolve dependencies in the image until the lockfile can be regenerated and
+# committed from a full checkout.
+RUN bun install
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
