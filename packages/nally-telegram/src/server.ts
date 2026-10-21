@@ -26,6 +26,10 @@ const auth = `Basic ${btoa(`opencode:${password}`)}`
 const sessions = new Map<number, string>()
 const voiceSessions = new Map<string, string>()
 const voiceProgress = new Map<string, string>()
+// Cache short, repeated voice fillers so ElevenLabs is only called once per phrase/voice/model.
+const speechCache = new Map<string, { audio: Uint8Array; contentType: string; cachedAt: number }>()
+const SPEECH_CACHE_MAX_ENTRIES = 48
+const SPEECH_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const voiceAccessToken = process.env.NALLY_VOICE_ACCESS_TOKEN?.trim() ?? ""
 let voiceRateWindowStart = Date.now()
 let voiceRateCount = 0
@@ -401,6 +405,20 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
     try {
       const modelID = process.env.ELEVENLABS_TTS_MODEL?.trim() || "eleven_flash_v2_5"
+      const cacheKey = `${voiceID}\u0000${modelID}\u0000mp3_22050_32\u0000${text}`
+      const now = Date.now()
+      for (const [key, entry] of speechCache) {
+        if (now - entry.cachedAt > SPEECH_CACHE_TTL_MS) speechCache.delete(key)
+      }
+      let cached = speechCache.get(cacheKey)
+      if (cached) {
+        // LRU: refresh insertion order on reuse.
+        speechCache.delete(cacheKey)
+        speechCache.set(cacheKey, cached)
+        return new Response(cached.audio.slice(), {
+          headers: { "content-type": cached.contentType, "cache-control": "private, max-age=21600", "x-content-type-options": "nosniff", "x-nally-speech-cache": "HIT" },
+        })
+      }
       const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceID)}/stream?output_format=mp3_22050_32`
       const response = await fetch(endpoint, {
         method: "POST",
@@ -412,8 +430,17 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
         log(`ElevenLabs speech request failed (HTTP ${response.status})`)
         return voiceJSON({ error: "speech_generation_failed" }, 502)
       }
-      return new Response(response.body, {
-        headers: { "content-type": response.headers.get("content-type") || "audio/mpeg", "cache-control": "no-store", "x-content-type-options": "nosniff" },
+      const audio = new Uint8Array(await response.arrayBuffer())
+      if (audio.byteLength > 2_000_000) return new Response(audio, { headers: { "content-type": response.headers.get("content-type") || "audio/mpeg", "cache-control": "no-store", "x-content-type-options": "nosniff" } })
+      cached = { audio, contentType: response.headers.get("content-type") || "audio/mpeg", cachedAt: now }
+      speechCache.set(cacheKey, cached)
+      while (speechCache.size > SPEECH_CACHE_MAX_ENTRIES) {
+        const oldest = speechCache.keys().next().value
+        if (oldest === undefined) break
+        speechCache.delete(oldest)
+      }
+      return new Response(audio.slice(), {
+        headers: { "content-type": cached.contentType, "cache-control": "private, max-age=21600", "x-content-type-options": "nosniff", "x-nally-speech-cache": "MISS" },
       })
     } catch {
       return voiceJSON({ error: "elevenlabs_unreachable" }, 502)
