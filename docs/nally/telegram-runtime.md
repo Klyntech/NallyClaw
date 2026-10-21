@@ -1,6 +1,6 @@
 # NallyClaw Telegram runtime
 
-The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes only `GET /healthz` and `POST /telegram/webhook` on the public port. The OpenCode agent HTTP API runs on a separate loopback-only port, so the public service does not proxy arbitrary API routes.
+The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes only `GET /healthz` and `POST /telegram/webhook` on the public port. The underlying adapted agent server runs on a separate loopback-only port; the public service does not proxy arbitrary agent API routes. User-facing identity and behavior are defined by Nally's system prompt.
 
 ## Security and transport behavior
 
@@ -10,7 +10,7 @@ The Render entry point is `packages/nally-telegram/src/server.ts`. It exposes on
 - Ignores bot messages, unsupported updates, and duplicate update IDs.
 - Splits long replies into Telegram-sized chunks and does not send internal exception details to chat.
 - Automatically calls Telegram `setWebhook` at startup when the required Telegram variables and `RENDER_EXTERNAL_URL` are available.
-- Uses the existing OpenCode session/prompt API internally; the internal API listener binds to loopback only.
+- Uses the adapted agent session/prompt API internally; the internal API listener binds to loopback only. This is an implementation detail, not the agent's user-facing identity.
 
 ## Required Render environment
 
