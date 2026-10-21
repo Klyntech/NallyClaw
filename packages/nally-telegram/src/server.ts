@@ -87,7 +87,7 @@ function authFailureHint(error: any) {
     : typeof error?.response?.status === "number" ? error.response.status : undefined
 
   // Deliberately classify only; never write provider response bodies or raw errors to logs.
-  if (/not set|missing auth credential|missing credential|no api key|opencode_api_key/.test(message)) {
+  if (/not set|missing auth credential|missing credential|no api key|api key required|credential required/.test(message)) {
     return "missing-credential"
   }
   if (status === 401 || /incorrect api key|invalid api key|unauthorized|authentication failed|invalid token/.test(message)) {
@@ -240,10 +240,16 @@ async function registerWebhook() {
 
 try {
   const configuredModel = process.env.NALLY_DEFAULT_MODEL?.trim() || process.env.OPENCODE_MODEL?.trim()
-  const explicitModel = selectedModel()
+  let modelLabel = configuredModel ? "invalid-or-unresolved" : "automatic (no model env set)"
+  try {
+    const explicitModel = selectedModel()
+    if (explicitModel) modelLabel = `${explicitModel.providerID}/${explicitModel.id}`
+  } catch {
+    modelLabel = "invalid (check NALLY_DEFAULT_MODEL / OPENCODE_MODEL)"
+  }
   const opencodeKeyStatus = credentialPresence("OPENCODE_API_KEY")
   const alternateZenKeyStatus = credentialPresence("OPENCODE_ZEN_API_KEY")
-  log(`AI config providerOverride=${process.env.NALLY_DEFAULT_PROVIDER?.trim() || "unset"}; model=${explicitModel ? `${explicitModel.providerID}/${explicitModel.id}` : configuredModel ? "invalid-or-unresolved" : "automatic (no model env set)"}; OPENCODE_API_KEY=${opencodeKeyStatus}; OPENCODE_ZEN_API_KEY=${alternateZenKeyStatus}`)
+  log(`AI config providerOverride=${process.env.NALLY_DEFAULT_PROVIDER?.trim() || "unset"}; model=${modelLabel}; OPENCODE_API_KEY=${opencodeKeyStatus}; OPENCODE_ZEN_API_KEY=${alternateZenKeyStatus}`)
   await waitForAgent()
   await registerWebhook()
   log(`HTTP listener ready on port ${port}`)
