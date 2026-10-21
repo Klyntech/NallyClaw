@@ -18,13 +18,13 @@ Telegram delivers a message to the NallyClaw webhook. The adapter passes it into
 
 ## Deployment
 
-See [the Telegram runtime guide](docs/nally/telegram-runtime.md) for required environment variables, security boundaries, and known limitations.
+See [the Telegram runtime guide](docs/nally/telegram-runtime.md) for required environment variables and security boundaries, and the [memory and RAG guide](docs/nally/memory-and-rag.md) for Neon persistence, memory tools, and NVIDIA embedding configuration.
 
 The implementation plan and remaining product work are tracked in [the Nally implementation plan](docs/nally/implementation-plan.md).
 
 ## Important limitations
 
-Nally is under active development. Text conversations work, but this does not yet mean every planned capability is complete. In particular, persistent chat-to-session mapping, voice-message input, hosted voice integrations, memory-budget measurements, and full CI verification remain to be completed.
+Nally is under active development. The new Neon-backed Telegram session mapping, long-term memory tools, automatic retrieval, and text-ingestion RAG path are implemented in the current branch but require a successful Render build and live Telegram verification. The runtime's primary session/history database still uses its existing SQLite backend; it has not been migrated wholesale to Neon. Voice-message input, hosted voice integrations, memory-budget measurements, and full CI verification remain outstanding.
 
 ## Upstream attribution
 
