@@ -117,7 +117,7 @@ function onTranscript(event) {
   } else if (!data.is_final) setState(busy ? "thinking" : "listening", busy ? "Nally is working…" : "Hearing: " + text);
 }
 async function begin() {
-  if (!access.value.trim()) { access.focus(); setState("idle", "Enter your voice access token in Connection settings first."); return; }
+  if (!access.value.trim()) { document.querySelector(".settings").open = true; access.focus(); setState("idle", "Enter your voice access token in Connection settings first."); return; }
   start.disabled = true;
   try {
     setState("thinking", "Connecting securely…");
@@ -155,6 +155,10 @@ async function begin() {
   }
 }
 async function stopCall(reset = true) {
+  const previousSessionId = sessionId;
+  if (previousSessionId && access.value.trim()) {
+    void fetch("/api/voice/end", { method: "POST", headers: { ...authHeaders(), "content-type": "application/json" }, body: JSON.stringify({ sessionId: previousSessionId }) }).catch(() => {});
+  }
   ended = true;
   if (socket) { try { socket.close(); } catch {} socket = undefined; }
   if (processor) { try { processor.disconnect(); } catch {} processor = undefined; }
