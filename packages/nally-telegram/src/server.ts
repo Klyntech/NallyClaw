@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process"
 import { createTelegramWebhook, type TelegramTextMessage } from "./webhook"
+import { selectedModel } from "./model-config"
+import { waitForAssistantMessage } from "./wait-for-response"
 
 const host = "127.0.0.1"
 const internalPort = Number(process.env.NALLY_INTERNAL_PORT ?? 3001)
@@ -61,19 +63,6 @@ async function waitForAgent() {
     await Bun.sleep(1_000)
   }
   throw new Error("agent server did not become ready")
-}
-
-function selectedModel() {
-  // OPENCODE_MODEL accepts either "big-pickle" or an explicit "provider/model" reference.
-  const configured = process.env.NALLY_DEFAULT_MODEL?.trim() || process.env.OPENCODE_MODEL?.trim()
-  if (!configured) return undefined
-  const slash = configured.indexOf("/")
-  const providerID = slash > 0
-    ? configured.slice(0, slash)
-    : (process.env.NALLY_DEFAULT_PROVIDER?.trim() || "opencode")
-  const id = slash > 0 ? configured.slice(slash + 1) : configured
-  if (!providerID || !id) throw new Error("Invalid NALLY_DEFAULT_MODEL / OPENCODE_MODEL")
-  return { providerID, id }
 }
 
 function credentialPresence(name: string) {
@@ -150,12 +139,16 @@ async function onMessage(message: TelegramTextMessage): Promise<string> {
     if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
 
     stage = "waiting for model completion"
-    await api(`/api/experimental/session/${encodeURIComponent(sessionID)}/wait`, { method: "POST" }, 120_000)
+    // OpenCode's wait endpoint may return immediately if the wake-up has not started
+    // yet. The TUI follows the event stream; Telegram instead polls the durable message
+    // projection until this exact user turn has a completed assistant message.
+    const { messages, userIndex } = await waitForAssistantMessage(
+      () => api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200&order=desc`),
+      userMessageID,
+      { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms) },
+    )
 
     stage = "reading assistant response"
-    const result = await api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200&order=desc`)
-    const messages = Array.isArray(result.data) ? result.data : []
-    const userIndex = messages.findIndex((item: any) => item.id === userMessageID)
     const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
     const assistantDiagnostics: string[] = []
     for (const candidate of candidates) {
