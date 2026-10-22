@@ -56,7 +56,10 @@ export async function checkMemoryDatabase() {
 function sql() {
   const url = databaseURL()
   if (!url) throw new Error("Nally memory is not configured. Set NALLY_DATABASE_URL to the Neon PostgreSQL connection string in Render.")
-  return (sqlClient ??= neon(url))
+  // Force the rows-only return contract used throughout this module. A global Neon
+  // client setting can otherwise make tagged queries return { rows, fields, ... },
+  // which breaks callers that index the result directly (e.g. rows[0]).
+  return (sqlClient ??= neon(url, { fullResults: false, arrayMode: false }))
 }
 
 async function ensureSchema() {
