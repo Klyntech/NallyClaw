@@ -69,7 +69,7 @@ export function buildConversationContext(
   // Slicing the combined list from the end lets recent turns crowd out every
   // relevant result, defeating retrieval exactly when the runtime session is lost.
   const merged = [...relevant.slice(0, 4), ...recent.slice(-8)].filter((turn) => {
-    const key = `${turn.user_text}\\u0000${turn.assistant_text}`
+    const key = `${turn.user_text}\u0000${turn.assistant_text}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
