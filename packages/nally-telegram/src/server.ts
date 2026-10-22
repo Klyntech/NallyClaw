@@ -4,7 +4,7 @@ import { voicePage } from "./voice-page"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { waitForAssistantMessage } from "./wait-for-response"
-import { checkMemoryDatabase, getRecentConversationTurns, getTelegramSession, saveConversationTurn, saveTelegramSession } from "../../core/src/nally-memory/store"
+import { checkMemoryDatabase, getRecentConversationTurns, getTelegramSession, saveConversationTurn, saveTelegramSession, searchConversationTurns } from "../../core/src/nally-memory/store"
 
 const host = "127.0.0.1"
 const internalPort = Number(process.env.NALLY_INTERNAL_PORT ?? 3001)
@@ -185,6 +185,25 @@ function authFailureHint(error: any) {
   return "auth-details-unavailable"
 }
 
+async function recoveredConversationPrompt(userID: number, currentText: string) {
+  const [recent, relevant] = await Promise.all([
+    getRecentConversationTurns(userID, 8),
+    searchConversationTurns(userID, currentText, 3),
+  ])
+  const seen = new Set<string>()
+  const merged = [...relevant, ...recent].filter((turn) => {
+    const key = `${turn.user_text}\u0000${turn.assistant_text}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(-10)
+  if (!merged.length) return currentText
+  const history = merged.map((turn, index) =>
+    `Turn ${index + 1}:\nUser: ${turn.user_text.slice(0, 1800)}\nNally: ${turn.assistant_text.slice(0, 2200)}`,
+  ).join("\n\n").slice(-18_000)
+  return `The runtime session was recovered. Use the saved exchanges below as prior context, not as a new request. Relevant older exchanges may appear before recent exchanges. Do not repeat the history verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${currentText}`
+}
+
 async function onMessage(message: TelegramTextMessage, reportProgress: TelegramProgressReporter): Promise<string> {
   let stage = "waiting for agent readiness"
   const startedAt = Date.now()
@@ -229,13 +248,7 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
     }
 
     let promptText = message.text
-    if (restoreHistory) {
-      const turns = await getRecentConversationTurns(message.userID, 8)
-      if (turns.length) {
-        const history = turns.map((turn, index) => `Turn ${index + 1}:\nUser: ${turn.user_text}\nNally: ${turn.assistant_text}`).join("\n\n")
-        promptText = `The runtime session was recovered. Use this saved conversation as prior context, not as a new request. Do not repeat it verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${message.text}`
-      }
-    }
+    if (restoreHistory) promptText = await recoveredConversationPrompt(message.userID, message.text)
 
     stage = "submitting prompt"
     await reportProgress("🤔 Thinking…")
@@ -461,12 +474,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     try {
       let voicePrompt = text
       if (voiceRestoreSessions.delete(sessionId) && allowedUserIDs.size === 1) {
-        const personalUserID = [...allowedUserIDs][0]
-        const turns = await getRecentConversationTurns(personalUserID, 8)
-        if (turns.length) {
-          const history = turns.map((turn, index) => `Turn ${index + 1}:\nUser: ${turn.user_text}\nNally: ${turn.assistant_text}`).join("\n\n")
-          voicePrompt = `The runtime session was recovered. Use this saved conversation as prior context, not as a new request. Do not repeat it verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${text}`
-        }
+        voicePrompt = await recoveredConversationPrompt([...allowedUserIDs][0], text)
       }
       const admitted = await api(`/api/session/${encodeURIComponent(agentSessionID)}/prompt`, {
         method: "POST",
