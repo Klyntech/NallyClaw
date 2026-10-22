@@ -7,6 +7,9 @@ test("renders the default system prompt instructions", () => {
   expect(prompt).toContain("You are Nally")
   expect(prompt).not.toContain("You are an AI agent running in OpenCode")
   expect(prompt).toContain("Use the edit tool for targeted changes to existing text files")
+  expect(prompt).toContain("Use subtle, dry wit occasionally")
+  expect(prompt).toContain("Do not use “Sir” or other honorifics in text replies")
+  expect(prompt).toContain("For voice replies, use natural spoken sentences")
 })
 test("adds durable memory guidance when memory tools are available", () => {
   const prompt = SessionSystemPrompt.make(["memory_remember", "memory_recall"])
