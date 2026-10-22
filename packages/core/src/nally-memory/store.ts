@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless"
+import { fuseMemoryCandidates } from "./retrieval.js"
 
 type Category = "fact" | "preference" | "goal" | "project" | "decision" | "procedure" | "other"
 type EmbeddingMode = "query" | "passage"
@@ -366,36 +367,51 @@ async function lexicalMemories(db: Sql, ownerKey: string, query: string, limit: 
 }
 
 async function retrieveMemories(db: Sql, ownerKey: string, query: string, limit: number, embedding?: { values: number[]; model: string }) {
+  // Always run lexical retrieval as well as semantic retrieval. Vector similarity
+  // is good at paraphrases, while PostgreSQL FTS is better at exact names, IDs,
+  // project labels, and unusual terms. Their score scales are not comparable, so
+  // merge ranked lists with reciprocal-rank fusion.
+  const candidateLimit = Math.max(20, limit * 4)
+  const lexical = await lexicalMemories(db, ownerKey, query, candidateLimit)
+  let semantic: any[] = []
+
   if (embedding && vectorAvailable) {
-    const rows = await db`
-      SELECT id, category, content, tags_json, importance, created_at, updated_at,
-        (1 - (embedding_vector <=> ${vectorLiteral(embedding.values)}::vector))::float8 AS similarity
-      FROM nally_memories
-      WHERE owner_key = ${ownerKey}
-        AND forgotten_at IS NULL
-        AND embedding_vector IS NOT NULL
-        AND embedding_model = ${embedding.model}
-      ORDER BY embedding_vector <=> ${vectorLiteral(embedding.values)}::vector
-      LIMIT ${limit}
-    `
-    if (rows.length) return rows
+    try {
+      semantic = await db`
+        SELECT id, category, content, tags_json, importance, created_at, updated_at,
+          (1 - (embedding_vector <=> ${vectorLiteral(embedding.values)}::vector))::float8 AS similarity
+        FROM nally_memories
+        WHERE owner_key = ${ownerKey}
+          AND forgotten_at IS NULL
+          AND embedding_vector IS NOT NULL
+          AND embedding_model = ${embedding.model}
+        ORDER BY embedding_vector <=> ${vectorLiteral(embedding.values)}::vector
+        LIMIT ${candidateLimit}
+      `
+    } catch (error) {
+      // A stale or dimension-mismatched vector index must not disable memory.
+      console.warn("[nally-memory] vector retrieval failed; using lexical results", error instanceof Error ? error.message : "unknown error")
+    }
+  } else if (embedding) {
+    try {
+      const rows = await db`
+        SELECT id, category, content, tags_json, importance, created_at, updated_at, embedding
+        FROM nally_memories
+        WHERE owner_key = ${ownerKey} AND forgotten_at IS NULL AND embedding IS NOT NULL AND embedding_model = ${embedding.model}
+        ORDER BY updated_at DESC
+        LIMIT 500
+      `
+      semantic = rows
+        .map((row: any) => ({ ...row, similarity: cosine(embedding.values, parseEmbedding(row.embedding) ?? []) }))
+        .filter((row: any) => row.similarity >= 0.25)
+        .sort((a: any, b: any) => b.similarity - a.similarity)
+        .slice(0, candidateLimit)
+    } catch (error) {
+      console.warn("[nally-memory] fallback vector retrieval failed; using lexical results", error instanceof Error ? error.message : "unknown error")
+    }
   }
-  if (embedding && !vectorAvailable) {
-    const rows = await db`
-      SELECT id, category, content, tags_json, importance, created_at, updated_at, embedding
-      FROM nally_memories
-      WHERE owner_key = ${ownerKey} AND forgotten_at IS NULL AND embedding IS NOT NULL AND embedding_model = ${embedding.model}
-      ORDER BY importance DESC, updated_at DESC
-      LIMIT 500
-    `
-    const ranked = rows
-      .map((row: any) => ({ ...row, similarity: cosine(embedding.values, parseEmbedding(row.embedding) ?? []) }))
-      .filter((row: any) => row.similarity > 0.1)
-      .sort((a: any, b: any) => b.similarity - a.similarity)
-      .slice(0, limit)
-    if (ranked.length) return ranked
-  }
-  return lexicalMemories(db, ownerKey, query, limit)
+
+  return fuseMemoryCandidates(semantic, lexical, limit, 0.25)
 }
 
 export async function rememberMemory(input: {
@@ -684,7 +700,7 @@ export async function forgetKnowledge(sessionID: string, documentID: string) {
 }
 
 export async function autoRetrieve(sessionID: string, query: string) {
-  if (!memoryDatabaseConfigured() || query.trim().length < 10) return { memories: [] as MemoryRecord[], knowledge: [] as KnowledgeChunk[] }
+  if (!memoryDatabaseConfigured() || query.trim().length < 3) return { memories: [] as MemoryRecord[], knowledge: [] as KnowledgeChunk[] }
   await ensureSchema()
   const db = sql()
   const ownerKey = await ownerForSession(sessionID)
