@@ -146,6 +146,79 @@ describe("waitForAssistantMessage", () => {
     expect(progress).toContain("🌐 Fetching page…")
   })
 
+  test("does not treat an unchanged Thinking label as stalled while assistant content is progressing", async () => {
+    let clock = 0
+    let calls = 0
+    const progress: string[] = []
+    const result = await waitForAssistantMessage(
+      async () => {
+        calls++
+        if (calls === 1) {
+          return {
+            data: [
+              { id: "msg-assistant", type: "assistant", content: [{ type: "text", text: "Working" }] },
+              { id: "msg-user", type: "user" },
+            ],
+          }
+        }
+        if (calls === 2) {
+          return {
+            data: [
+              { id: "msg-assistant", type: "assistant", content: [{ type: "text", text: "Working on the answer" }] },
+              { id: "msg-user", type: "user" },
+            ],
+          }
+        }
+        return {
+          data: [
+            {
+              id: "msg-assistant",
+              type: "assistant",
+              finish: "stop",
+              time: { completed: "2026-10-22T19:00:00.000Z" },
+              content: [{ type: "text", text: "Done" }],
+            },
+            { id: "msg-user", type: "user" },
+          ],
+        }
+      },
+      "msg-user",
+      {
+        timeoutMs: 2_000,
+        stagnationMs: 200,
+        pollIntervalMs: 100,
+        now: () => clock,
+        sleep: async (ms) => { clock += ms },
+        onProgress: (status) => { progress.push(status) },
+      },
+    )
+
+    expect(result.messages[0]?.id).toBe("msg-assistant")
+    expect(progress).toContain("✍️ Drafting response…")
+  })
+
+  test("still times out when the assistant snapshot genuinely stops changing", async () => {
+    let clock = 0
+    await expect(
+      waitForAssistantMessage(
+        async () => ({
+          data: [
+            { id: "msg-assistant", type: "assistant", content: [{ type: "text", text: "Still working" }] },
+            { id: "msg-user", type: "user" },
+          ],
+        }),
+        "msg-user",
+        {
+          timeoutMs: 2_000,
+          stagnationMs: 200,
+          pollIntervalMs: 100,
+          now: () => clock,
+          sleep: async (ms) => { clock += ms },
+        },
+      ),
+    ).rejects.toThrow("no progress for too long")
+  })
+
   test("maps common tools to user-readable status labels", () => {
     expect(describeToolProgress("websearch")).toBe("🔎 Searching the web…")
     expect(describeToolProgress("read")).toBe("📄 Reading file…")
