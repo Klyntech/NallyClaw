@@ -173,7 +173,7 @@ export const Plugin = {
         name: "remember",
         options: { namespace: "memory", codemode: false },
         description:
-          "Save a useful, durable memory for the current Telegram user. Prefer stable preferences, recurring goals, ongoing project context, and important decisions. Avoid transient details. Never store passwords, API keys, access tokens, or other secrets. Only save sensitive personal details when the user explicitly asks.",
+          "Save a useful, durable memory for Nally's single owner across Telegram and browser voice. Proactively save stable facts the user shares about themselves, preferences, goals, ongoing projects, decisions, and corrections so they do not have to repeat them; do not ask permission for every ordinary, non-sensitive memory. Avoid saving every transient utterance or duplicating existing memories. Never store passwords, API keys, access tokens, or other secrets. Only save sensitive personal details when the user explicitly asks. When a saved fact changes, update the existing memory rather than keeping conflicting versions.",
         input: RememberInput,
         output: Schema.String,
         execute: (input, context) => action(async () => JSON.stringify(await rememberMemory({ sessionID: context.sessionID, ...input }), null, 2)),
