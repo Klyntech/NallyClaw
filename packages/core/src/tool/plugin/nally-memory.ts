@@ -225,7 +225,7 @@ export const Plugin = {
       draft.add({
         name: "update",
         options: { namespace: "memory", codemode: false },
-        description: "Update the content, category, importance, or tags of one of the current user's existing memories.",
+        description: "Update an existing memory when the user corrects or changes a saved fact. First use memory_recall or memory_search to find the relevant record and its ID; replace its content with the corrected fact using memory_id. This prevents competing old and new versions. Only update records belonging to the current user. If several records plausibly refer to different facts, clarify instead of merging them.",
         input: UpdateInput,
         output: Schema.String,
         execute: (input, context) => action(() => updateMemory({ sessionID: context.sessionID, memoryID: input.memory_id, content: input.content, category: input.category, importance: input.importance, tags: input.tags })),
