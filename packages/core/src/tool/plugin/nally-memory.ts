@@ -130,7 +130,7 @@ export const Plugin = {
         try: async () => {
           if (!memoryDatabaseConfigured()) return
           const latest = latestUserText(event)
-          if (!latest || latest.text.length < 10) return
+          if (!latest || latest.text.trim().length < 3) return
           const result = await autoRetrieve(event.sessionID, latest.text)
           if (!result.memories.length && !result.knowledge.length) return
 
@@ -154,7 +154,14 @@ export const Plugin = {
           event.messages.splice(latest.index, 0, message)
         },
         catch: (error) => error instanceof Error ? error : new Error(String(error)),
-      }).pipe(Effect.catch(() => Effect.void))
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => console.warn(
+            "[nally-memory] automatic retrieval failed",
+            error instanceof Error ? error.message : "unknown error",
+          )),
+        ),
+      )
 
     yield* ctx.session.hook("context", contextHook)
     yield* ctx.session.hook("compaction", contextHook)
