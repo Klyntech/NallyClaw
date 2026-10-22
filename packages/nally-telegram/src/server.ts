@@ -172,7 +172,7 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
     const { messages, userIndex } = await waitForAssistantMessage(
       () => api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200&order=desc`),
       userMessageID,
-      { timeoutMs: 120_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms), onProgress: reportProgress },
+      { timeoutMs: 120_000, stagnationMs: 90_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms), onProgress: reportProgress },
     )
 
     stage = "reading assistant response"
