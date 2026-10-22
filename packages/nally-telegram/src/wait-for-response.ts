@@ -142,6 +142,7 @@ export async function waitForAssistantMessage(
     onProgress?: (status: string) => void | Promise<void>
     onPollError?: (error: unknown, consecutiveFailures: number) => void | Promise<void>
     onUserMessagePending?: (elapsedMs: number) => void | Promise<void>
+    waitForUpdate?: (ms: number) => Promise<void>
     maxConsecutivePollErrors?: number
   } = {},
 ): Promise<CompletedAssistantMessages> {
@@ -192,7 +193,7 @@ export async function waitForAssistantMessage(
           reason: "deadline",
         })
       }
-      await sleep(Math.min(pollIntervalMs, remainingAfterError))
+      await (options.waitForUpdate ?? sleep)(Math.min(pollIntervalMs, remainingAfterError))
       continue
     }
 
@@ -255,6 +256,6 @@ export async function waitForAssistantMessage(
         reason: "deadline",
       })
     }
-    await sleep(Math.min(pollIntervalMs, remaining))
+    await (options.waitForUpdate ?? sleep)(Math.min(pollIntervalMs, remaining))
   }
 }
