@@ -96,6 +96,23 @@ async function ensureSchema() {
         )
       `
       await db`
+        CREATE TABLE IF NOT EXISTS nally_conversation_turns (
+          id text PRIMARY KEY,
+          telegram_user_id text NOT NULL,
+          session_id text NOT NULL,
+          source text NOT NULL DEFAULT 'telegram',
+          source_event_id text,
+          user_text text NOT NULL,
+          assistant_text text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          UNIQUE (source, source_event_id)
+        )
+      `
+      await db`
+        CREATE INDEX IF NOT EXISTS nally_conversation_turns_user_created
+        ON nally_conversation_turns (telegram_user_id, created_at DESC)
+      `
+      await db`
         CREATE TABLE IF NOT EXISTS nally_memories (
           id text PRIMARY KEY,
           owner_key text NOT NULL,
@@ -306,6 +323,66 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
     lookupKeys: existing?.[0] && typeof existing[0] === "object" ? Object.keys(existing[0]).slice(0, 8) : [],
   })
   throw new Error("Neon session mapping write could not be verified; inspect the preceding structural diagnostic.")
+}
+
+export type ConversationTurn = {
+  user_text: string
+  assistant_text: string
+  created_at: string
+}
+
+/** Store completed user-visible turns in Neon, independently of the runtime SQLite session. */
+export async function saveConversationTurn(input: {
+  userID: number
+  sessionID: string
+  source: "telegram" | "voice"
+  sourceEventID?: string
+  userText: string
+  assistantText: string
+}) {
+  const userText = input.userText.trim().slice(0, 20_000)
+  const assistantText = input.assistantText.trim().slice(0, 40_000)
+  if (!userText || !assistantText) throw new Error("Conversation turns require non-empty user and assistant text.")
+  await ensureSchema()
+  const rows = await sql()`
+    INSERT INTO nally_conversation_turns
+      (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text)
+    VALUES
+      (${crypto.randomUUID()}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
+       ${input.sourceEventID ?? null}, ${userText}, ${assistantText})
+    ON CONFLICT (source, source_event_id) DO NOTHING
+    RETURNING id
+  `
+  // A duplicate webhook event is already durable; verify it exists before returning.
+  if (input.sourceEventID && !rows[0]?.id) {
+    const existing = await sql()`
+      SELECT id FROM nally_conversation_turns
+      WHERE source = ${input.source} AND source_event_id = ${input.sourceEventID}
+      LIMIT 1
+    `
+    if (!existing[0]?.id) throw new Error("Conversation turn write could not be verified.")
+  }
+  return { saved: true, inserted: rows.length > 0 }
+}
+
+/** Fetch recent durable turns for rebuilding context after an ephemeral runtime session is lost. */
+export async function getRecentConversationTurns(userID: number, limit = 8): Promise<ConversationTurn[]> {
+  await ensureSchema()
+  const boundedLimit = Math.max(1, Math.min(20, Math.floor(limit)))
+  const rows = await sql()`
+    SELECT user_text, assistant_text, created_at
+    FROM nally_conversation_turns
+    WHERE telegram_user_id = ${String(userID)}
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${boundedLimit}
+  `
+  return rows.reverse().filter((row: any) =>
+    typeof row.user_text === "string" && typeof row.assistant_text === "string",
+  ).map((row: any) => ({
+    user_text: row.user_text,
+    assistant_text: row.assistant_text,
+    created_at: String(row.created_at ?? ""),
+  }))
 }
 
 function tagsOf(input: unknown): string[] {
