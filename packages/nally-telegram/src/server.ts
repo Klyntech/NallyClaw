@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto"
 import { voicePage } from "./voice-page"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
+import { buildConversationContext } from "../../core/src/nally-memory/retrieval"
 import { waitForAssistantMessage } from "./wait-for-response"
 import { checkMemoryDatabase, getRecentConversationTurns, getTelegramSession, saveConversationTurn, saveTelegramSession, searchConversationTurns } from "../../core/src/nally-memory/store"
 
@@ -190,18 +191,7 @@ async function recoveredConversationPrompt(userID: number, currentText: string) 
     getRecentConversationTurns(userID, 8),
     searchConversationTurns(userID, currentText, 3),
   ])
-  const seen = new Set<string>()
-  const merged = [...relevant, ...recent].filter((turn) => {
-    const key = `${turn.user_text}\u0000${turn.assistant_text}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  }).slice(-10)
-  if (!merged.length) return currentText
-  const history = merged.map((turn, index) =>
-    `Turn ${index + 1}:\nUser: ${turn.user_text.slice(0, 1800)}\nNally: ${turn.assistant_text.slice(0, 2200)}`,
-  ).join("\n\n").slice(-18_000)
-  return `The runtime session was recovered. Use the saved exchanges below as prior context, not as a new request. Relevant older exchanges may appear before recent exchanges. Do not repeat the history verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${currentText}`
+  return buildConversationContext(recent, relevant, currentText)
 }
 
 async function onMessage(message: TelegramTextMessage, reportProgress: TelegramProgressReporter): Promise<string> {
