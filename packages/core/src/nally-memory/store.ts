@@ -611,56 +611,7 @@ export async function searchKnowledge(sessionID: string, query: string, limit = 
   const ownerKey = await ownerForSession(sessionID)
   const max = clampLimit(limit, 10)
   const embedding = await optionalEmbedding(query, "query")
-  if (embedding && vectorAvailable) {
-    const rows = await db`
-      SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
-        (1 - (c.embedding_vector <=> ${vectorLiteral(embedding.values)}::vector))::float8 AS similarity
-      FROM nally_document_chunks c
-      JOIN nally_documents d ON d.id = c.document_id
-      WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-        AND c.embedding_vector IS NOT NULL AND c.embedding_model = ${embedding.model}
-      ORDER BY c.embedding_vector <=> ${vectorLiteral(embedding.values)}::vector
-      LIMIT ${max}
-    `
-    if (rows.length) return rows.map(knowledgeItem)
-  }
-  if (embedding && !vectorAvailable) {
-    const rows = await db`
-      SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content, c.embedding
-      FROM nally_document_chunks c
-      JOIN nally_documents d ON d.id = c.document_id
-      WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL AND c.embedding IS NOT NULL AND c.embedding_model = ${embedding.model}
-      ORDER BY d.updated_at DESC LIMIT 1000
-    `
-    const ranked = rows
-      .map((row: any) => ({ ...row, similarity: cosine(embedding.values, parseEmbedding(row.embedding) ?? []) }))
-      .filter((row: any) => row.similarity > 0.1)
-      .sort((a: any, b: any) => b.similarity - a.similarity)
-      .slice(0, max)
-    if (ranked.length) return ranked.map(knowledgeItem)
-  }
-  const fts = lexicalQuery(query)
-  const rows = fts
-    ? await db`
-        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
-          ts_rank(to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')), to_tsquery('simple', ${fts}))::float8 AS score
-        FROM nally_document_chunks c
-        JOIN nally_documents d ON d.id = c.document_id
-        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-          AND to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')) @@ to_tsquery('simple', ${fts})
-        ORDER BY score DESC, d.updated_at DESC, c.chunk_index ASC
-        LIMIT ${max}
-      `
-    : await db`
-        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content
-        FROM nally_document_chunks c
-        JOIN nally_documents d ON d.id = c.document_id
-        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-          AND (c.content ILIKE ${pattern(query)} OR d.title ILIKE ${pattern(query)} OR COALESCE(d.source, '') ILIKE ${pattern(query)})
-        ORDER BY d.updated_at DESC, c.chunk_index ASC
-        LIMIT ${max}
-      `
-  return rows.map(knowledgeItem)
+  return (await retrieveKnowledgeRows(db, ownerKey, query, max, embedding)).map(knowledgeItem)
 }
 
 function knowledgeItem(row: any): KnowledgeChunk {
@@ -716,47 +667,58 @@ export async function autoRetrieve(sessionID: string, query: string) {
 }
 
 async function retrieveKnowledgeRows(db: Sql, ownerKey: string, query: string, limit: number, embedding?: { values: number[]; model: string }) {
-  if (embedding && vectorAvailable) {
-    const rows = await db`
-      SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
-        (1 - (c.embedding_vector <=> ${vectorLiteral(embedding.values)}::vector))::float8 AS similarity
-      FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
-      WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL AND c.embedding_vector IS NOT NULL AND c.embedding_model = ${embedding.model}
-      ORDER BY c.embedding_vector <=> ${vectorLiteral(embedding.values)}::vector LIMIT ${limit}
-    `
-    if (rows.length) return rows
-  }
-  if (embedding && !vectorAvailable) {
-    const rows = await db`
-      SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content, c.embedding
-      FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
-      WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL AND c.embedding IS NOT NULL AND c.embedding_model = ${embedding.model}
-      ORDER BY d.updated_at DESC LIMIT 500
-    `
-    const ranked = rows
-      .map((row: any) => ({ ...row, similarity: cosine(embedding.values, parseEmbedding(row.embedding) ?? []) }))
-      .filter((row: any) => row.similarity > 0.1)
-      .sort((a: any, b: any) => b.similarity - a.similarity)
-      .slice(0, limit)
-    if (ranked.length) return ranked
-  }
+  const candidateLimit = Math.max(20, limit * 4)
   const fts = lexicalQuery(query)
-  if (fts) {
-    return await db`
-      SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
-        ts_rank(to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')), to_tsquery('simple', ${fts}))::float8 AS score
-      FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
-      WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-        AND to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')) @@ to_tsquery('simple', ${fts})
-      ORDER BY score DESC, d.updated_at DESC, c.chunk_index ASC LIMIT ${limit}
-    `
-  }
   const match = pattern(query)
-  return await db`
-    SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content
-    FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
-    WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
-      AND (c.content ILIKE ${match} OR d.title ILIKE ${match})
-    ORDER BY d.updated_at DESC, c.chunk_index ASC LIMIT ${limit}
-  `
+  const lexical = fts
+    ? await db`
+        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
+          ts_rank(to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')), to_tsquery('simple', ${fts}))::float8 AS score
+        FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
+        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+          AND to_tsvector('simple', c.content || ' ' || d.title || ' ' || COALESCE(d.source, '')) @@ to_tsquery('simple', ${fts})
+        ORDER BY score DESC, d.updated_at DESC, c.chunk_index ASC LIMIT ${candidateLimit}
+      `
+    : await db`
+        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content
+        FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
+        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+          AND (c.content ILIKE ${match} OR d.title ILIKE ${match} OR COALESCE(d.source, '') ILIKE ${match})
+        ORDER BY d.updated_at DESC, c.chunk_index ASC LIMIT ${candidateLimit}
+      `
+
+  let semantic: any[] = []
+  if (embedding && vectorAvailable) {
+    try {
+      semantic = await db`
+        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content,
+          (1 - (c.embedding_vector <=> ${vectorLiteral(embedding.values)}::vector))::float8 AS similarity
+        FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
+        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+          AND c.embedding_vector IS NOT NULL AND c.embedding_model = ${embedding.model}
+        ORDER BY c.embedding_vector <=> ${vectorLiteral(embedding.values)}::vector LIMIT ${candidateLimit}
+      `
+    } catch (error) {
+      console.warn("[nally-memory] knowledge vector retrieval failed; using lexical results", error instanceof Error ? error.message : "unknown error")
+    }
+  } else if (embedding) {
+    try {
+      const rows = await db`
+        SELECT c.id, c.document_id, d.title, d.source, c.chunk_index, c.content, c.embedding
+        FROM nally_document_chunks c JOIN nally_documents d ON d.id = c.document_id
+        WHERE c.owner_key = ${ownerKey} AND d.deleted_at IS NULL
+          AND c.embedding IS NOT NULL AND c.embedding_model = ${embedding.model}
+        ORDER BY d.updated_at DESC LIMIT 1000
+      `
+      semantic = rows
+        .map((row: any) => ({ ...row, similarity: cosine(embedding.values, parseEmbedding(row.embedding) ?? []) }))
+        .filter((row: any) => row.similarity >= 0.25)
+        .sort((a: any, b: any) => b.similarity - a.similarity)
+        .slice(0, candidateLimit)
+    } catch (error) {
+      console.warn("[nally-memory] knowledge fallback-vector retrieval failed; using lexical results", error instanceof Error ? error.message : "unknown error")
+    }
+  }
+
+  return fuseMemoryCandidates(semantic, lexical, limit, 0.25)
 }
