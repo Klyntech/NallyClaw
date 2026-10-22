@@ -41,6 +41,18 @@ export function memoryDatabaseConfigured() {
   return Boolean(databaseURL())
 }
 
+/** Read-only connection check for health/readiness endpoints. Does not create or repair schema. */
+export async function checkMemoryDatabase() {
+  if (!memoryDatabaseConfigured()) return { configured: false, reachable: false }
+  try {
+    const rows = await sql()`SELECT 1 AS ok`
+    return { configured: true, reachable: Number(rows[0]?.ok) === 1 }
+  } catch {
+    // Never return connection strings, credentials, or raw provider errors to health endpoints.
+    return { configured: true, reachable: false }
+  }
+}
+
 function sql() {
   const url = databaseURL()
   if (!url) throw new Error("Nally memory is not configured. Set DATABASE_URL to the existing Neon PostgreSQL connection string in Render.")
