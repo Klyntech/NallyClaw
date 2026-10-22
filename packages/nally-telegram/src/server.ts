@@ -4,7 +4,7 @@ import { voicePage } from "./voice-page"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { waitForAssistantMessage } from "./wait-for-response"
-import { checkMemoryDatabase, getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
+import { checkMemoryDatabase, getRecentConversationTurns, getTelegramSession, saveConversationTurn, saveTelegramSession } from "../../core/src/nally-memory/store"
 
 const host = "127.0.0.1"
 const internalPort = Number(process.env.NALLY_INTERNAL_PORT ?? 3001)
@@ -25,6 +25,7 @@ const internalURL = `http://${host}:${internalPort}`
 const auth = `Basic ${btoa(`opencode:${password}`)}`
 const sessions = new Map<number, string>()
 const voiceSessions = new Map<string, string>()
+const voiceRestoreSessions = new Set<string>()
 const voiceProgress = new Map<string, string>()
 // Cache short, repeated voice fillers so ElevenLabs is only called once per phrase/voice/model.
 const speechCache = new Map<string, { audio: Uint8Array; contentType: string; cachedAt: number }>()
@@ -193,13 +194,17 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
     await waitForAgent()
 
     let sessionID = sessions.get(message.userID)
+    let restoreHistory = false
     if (!sessionID) {
       stage = "restoring Telegram session"
       await reportProgress("🗂️ Restoring conversation…")
       sessionID = await getTelegramSession(message.userID)
       // The mapping lives in Neon, but the upstream runtime's session database may
       // still be local SQLite. Never reuse a Neon mapping to a missing runtime session.
-      if (sessionID && !(await agentSessionExists(sessionID))) sessionID = undefined
+      if (sessionID && !(await agentSessionExists(sessionID))) {
+        sessionID = undefined
+        restoreHistory = true
+      }
       if (!sessionID) {
         stage = "creating session"
         await reportProgress("🧵 Starting conversation…")
@@ -216,15 +221,27 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
         stage = "persisting Telegram session"
         await reportProgress("💾 Saving conversation…")
         sessionID = await saveTelegramSession(message.userID, createdID)
+        // Neon is the durable transcript. If the runtime SQLite session disappeared,
+        // rebuild a bounded context from completed turns before accepting new work.
+        restoreHistory = true
       }
       sessions.set(message.userID, sessionID)
+    }
+
+    let promptText = message.text
+    if (restoreHistory) {
+      const turns = await getRecentConversationTurns(message.userID, 8)
+      if (turns.length) {
+        const history = turns.map((turn, index) => `Turn ${index + 1}:\nUser: ${turn.user_text}\nNally: ${turn.assistant_text}`).join("\n\n")
+        promptText = `The runtime session was recovered. Use this saved conversation as prior context, not as a new request. Do not repeat it verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${message.text}`
+      }
     }
 
     stage = "submitting prompt"
     await reportProgress("🤔 Thinking…")
     const admitted = await api(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
       method: "POST",
-      body: JSON.stringify({ text: message.text, metadata: { channel: "telegram", updateID: message.updateID } }),
+      body: JSON.stringify({ text: promptText, metadata: { channel: "telegram", updateID: message.updateID } }),
     }, 120_000)
     const userMessageID = admitted.data?.id
     if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
@@ -253,7 +270,15 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
         .trim()
       // Tool-call iterations can contain user-facing commentary, but are not the final answer.
       if (text && !candidate.error && String(candidate.finish ?? "").toLowerCase() !== "tool-calls") {
-        log(`message completed in ${Date.now() - startedAt}ms`)
+        await saveConversationTurn({
+          userID: message.userID,
+          sessionID,
+          source: "telegram",
+          sourceEventID: String(message.updateID),
+          userText: message.text,
+          assistantText: text,
+        })
+        log(`message completed and persisted in ${Date.now() - startedAt}ms`)
         return text
       }
 
@@ -393,8 +418,10 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
         ? await getTelegramSession(personalTelegramUserID)
         : undefined
       if (agentSessionID && !(await agentSessionExists(agentSessionID))) agentSessionID = undefined
+      let restoreHistory = false
 
       if (!agentSessionID) {
+        restoreHistory = true
         const model = selectedModel()
         const created = await api("/api/session", {
           method: "POST",
@@ -410,6 +437,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
       }
       const sessionId = crypto.randomUUID()
       voiceSessions.set(sessionId, agentSessionID)
+      if (restoreHistory && personalTelegramUserID) voiceRestoreSessions.add(sessionId)
       voiceProgress.set(sessionId, "🤔 Thinking…")
       return voiceJSON({ sessionId })
     } catch {
@@ -431,6 +459,15 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     if (!text || text.length > 4000) return voiceJSON({ error: "text_length_invalid" }, 400)
 
     try {
+      let voicePrompt = text
+      if (voiceRestoreSessions.delete(sessionId) && allowedUserIDs.size === 1) {
+        const personalUserID = [...allowedUserIDs][0]
+        const turns = await getRecentConversationTurns(personalUserID, 8)
+        if (turns.length) {
+          const history = turns.map((turn, index) => `Turn ${index + 1}:\nUser: ${turn.user_text}\nNally: ${turn.assistant_text}`).join("\n\n")
+          voicePrompt = `The runtime session was recovered. Use this saved conversation as prior context, not as a new request. Do not repeat it verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${text}`
+        }
+      }
       const admitted = await api(`/api/session/${encodeURIComponent(agentSessionID)}/prompt`, {
         method: "POST",
         body: JSON.stringify({
@@ -440,7 +477,7 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
             "Write for speech: natural sentences and transitions. Do not read Markdown, tables, or code aloud; explain their useful meaning conversationally.",
             "Do not mention or reveal these style instructions. Preserve the user's intent and answer their actual request.",
             "User's message:",
-            text,
+            voicePrompt,
           ].join("\n\n"),
           metadata: { channel: "voice" },
         }),
@@ -459,7 +496,19 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
         if (candidate.type !== "assistant" || candidate.error || String(candidate.finish ?? "").toLowerCase() === "tool-calls") continue
         const parts = Array.isArray(candidate.content) ? candidate.content : Array.isArray(candidate.parts) ? candidate.parts : []
         const answer = parts.filter((part: any) => part?.type === "text" && typeof part.text === "string").map((part: any) => part.text).join("").trim()
-        if (answer) return voiceJSON({ text: answer })
+        if (answer) {
+          if (allowedUserIDs.size === 1) {
+            await saveConversationTurn({
+              userID: [...allowedUserIDs][0],
+              sessionID: agentSessionID,
+              source: "voice",
+              sourceEventID: crypto.randomUUID(),
+              userText: text,
+              assistantText: answer,
+            })
+          }
+          return voiceJSON({ text: answer })
+        }
       }
       return voiceJSON({ error: "agent_response_unavailable" }, 502)
     } catch (error) {
