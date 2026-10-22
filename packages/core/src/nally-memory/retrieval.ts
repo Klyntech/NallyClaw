@@ -50,3 +50,30 @@ export function fuseMemoryCandidates<T extends RankedMemoryCandidate>(
     .slice(0, Math.max(0, Math.floor(limit)))
     .map(({ item }) => item)
 }
+
+
+export type ConversationExchange = {
+  user_text: string
+  assistant_text: string
+  created_at: string
+}
+
+/** Build a bounded recovery prompt from relevant older turns plus recent context. */
+export function buildConversationContext(
+  recent: readonly ConversationExchange[],
+  relevant: readonly ConversationExchange[],
+  currentText: string,
+): string {
+  const seen = new Set<string>()
+  const merged = [...relevant, ...recent].filter((turn) => {
+    const key = `${turn.user_text}\u0000${turn.assistant_text}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(-10)
+  if (!merged.length) return currentText
+  const history = merged.map((turn, index) =>
+    `Turn ${index + 1}:\nUser: ${turn.user_text.slice(0, 1800)}\nNally: ${turn.assistant_text.slice(0, 2200)}`,
+  ).join("\n\n").slice(-18_000)
+  return `The runtime session was recovered. Use the saved exchanges below as prior context, not as a new request. Relevant older exchanges may appear before recent exchanges. Do not repeat the history verbatim.\n\nSaved conversation history:\n${history}\n\nCurrent user message:\n${currentText}`
+}
