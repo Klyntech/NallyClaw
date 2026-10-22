@@ -20,7 +20,7 @@ Embedding calls use the OpenAI-compatible `POST /embeddings` endpoint, with `inp
 Tools appear in the agent as namespaced tools:
 
 - `memory_remember`: store a durable fact, preference, goal, project detail, decision, or procedure.
-- `memory_recall`: retrieve memories relevant to a query using embeddings when available, otherwise lexical matching.
+- `memory_recall`: retrieve memories using hybrid semantic + PostgreSQL full-text/substring search, fused by reciprocal rank.
 - `memory_search`: literal keyword/tag search.
 - `memory_list`: list saved memories, optionally filtered by category.
 - `memory_update`: update a memory's text, category, importance, or tags.
