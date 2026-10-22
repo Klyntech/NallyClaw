@@ -4,7 +4,7 @@ import { voicePage } from "./voice-page"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { waitForAssistantMessage } from "./wait-for-response"
-import { getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
+import { checkMemoryDatabase, getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
 
 const host = "127.0.0.1"
 const internalPort = Number(process.env.NALLY_INTERNAL_PORT ?? 3001)
@@ -530,6 +530,15 @@ const server = Bun.serve({
     const url = new URL(request.url)
     if (request.method === "GET" && url.pathname === "/healthz") {
       return Response.json({ ok: true, agent: agent.exitCode === null ? "starting" : "stopped", telegram: !!telegram, voice: !!voiceAccessToken })
+    }
+    if (request.method === "GET" && url.pathname === "/readyz") {
+      const memory = await checkMemoryDatabase()
+      const agentReady = agent.exitCode === null
+      const ready = agentReady && memory.configured && memory.reachable
+      return Response.json(
+        { ready, agent: agentReady ? "ready" : "stopped", neonMemory: memory.configured ? (memory.reachable ? "connected" : "unreachable") : "not_configured" },
+        { status: ready ? 200 : 503 },
+      )
     }
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/voice")) {
       return new Response(voicePage, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } })
