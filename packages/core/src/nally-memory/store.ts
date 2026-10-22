@@ -343,7 +343,7 @@ function lexicalQuery(query: string) {
 async function lexicalMemories(db: Sql, ownerKey: string, query: string, limit: number) {
   const fts = lexicalQuery(query)
   if (fts) {
-    return await db`
+    const rows = await db`
       SELECT id, category, content, tags_json, importance, created_at, updated_at,
         ts_rank(to_tsvector('simple', content || ' ' || tags_json::text || ' ' || category), to_tsquery('simple', ${fts}))::float8 AS score
       FROM nally_memories
@@ -353,7 +353,10 @@ async function lexicalMemories(db: Sql, ownerKey: string, query: string, limit: 
       ORDER BY score DESC, importance DESC, updated_at DESC
       LIMIT ${limit}
     `
+    if (rows.length) return rows
   }
+  // PostgreSQL tokenization can miss punctuation-heavy names and abbreviations;
+  // try a literal substring match before declaring recall empty.
   const match = pattern(query)
   return await db`
     SELECT id, category, content, tags_json, importance, created_at, updated_at
