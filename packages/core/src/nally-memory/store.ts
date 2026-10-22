@@ -55,7 +55,7 @@ export async function checkMemoryDatabase() {
 
 function sql() {
   const url = databaseURL()
-  if (!url) throw new Error("Nally memory is not configured. Set DATABASE_URL to the existing Neon PostgreSQL connection string in Render.")
+  if (!url) throw new Error("Nally memory is not configured. Set NALLY_DATABASE_URL to the Neon PostgreSQL connection string in Render.")
   return (sqlClient ??= neon(url))
 }
 
