@@ -282,7 +282,14 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
   `
   const result = existing[0]?.session_id
   if (typeof result === "string" && result.length > 0) return result
-  throw new Error("Neon did not return a durable Telegram session mapping after the upsert.")
+  // Keep diagnostics structural only: never log the Telegram ID, session ID, URL, or credentials.
+  console.error("[nally-memory] session upsert returned no mapping", {
+    upsertRows: Array.isArray(inserted) ? inserted.length : -1,
+    upsertKeys: inserted?.[0] && typeof inserted[0] === "object" ? Object.keys(inserted[0]).slice(0, 8) : [],
+    lookupRows: Array.isArray(existing) ? existing.length : -1,
+    lookupKeys: existing?.[0] && typeof existing[0] === "object" ? Object.keys(existing[0]).slice(0, 8) : [],
+  })
+  throw new Error("Neon session mapping write could not be verified; inspect the preceding structural diagnostic.")
 }
 
 function tagsOf(input: unknown): string[] {
