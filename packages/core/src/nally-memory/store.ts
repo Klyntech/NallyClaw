@@ -601,26 +601,37 @@ export async function addKnowledge(input: { sessionID: string; title: string; co
     return { id: String(existing[0].id), title, chunks: 0, duplicate: true }
   }
   const id = `doc_${crypto.randomUUID()}`
-  await db`
-    INSERT INTO nally_documents (id, owner_key, title, source, content_hash)
-    VALUES (${id}, ${ownerKey}, ${title}, ${input.source?.trim().slice(0, 1000) ?? null}, ${contentHash})
-  `
   const chunks = chunkText(content)
-  for (let index = 0; index < chunks.length; index++) {
-    const chunk = chunks[index]
-    const embedding = await optionalEmbedding(chunk, "passage")
-    const chunkID = `chk_${crypto.randomUUID()}`
-    if (embedding && vectorAvailable) {
-      await db`
-        INSERT INTO nally_document_chunks (id, owner_key, document_id, chunk_index, content, embedding, embedding_model, embedding_vector)
-        VALUES (${chunkID}, ${ownerKey}, ${id}, ${index}, ${chunk}, ${JSON.stringify(embedding.values)}::jsonb, ${embedding.model}, ${vectorLiteral(embedding.values)}::vector)
-      `
-    } else {
-      await db`
-        INSERT INTO nally_document_chunks (id, owner_key, document_id, chunk_index, content, embedding, embedding_model)
-        VALUES (${chunkID}, ${ownerKey}, ${id}, ${index}, ${chunk}, ${embedding ? JSON.stringify(embedding.values) : null}::jsonb, ${embedding?.model ?? null})
-      `
+  try {
+    await db`
+      INSERT INTO nally_documents (id, owner_key, title, source, content_hash)
+      VALUES (${id}, ${ownerKey}, ${title}, ${input.source?.trim().slice(0, 1000) ?? null}, ${contentHash})
+    `
+    for (let index = 0; index < chunks.length; index++) {
+      const chunk = chunks[index]
+      const embedding = await optionalEmbedding(chunk, "passage")
+      const chunkID = `chk_${crypto.randomUUID()}`
+      if (embedding && vectorAvailable) {
+        await db`
+          INSERT INTO nally_document_chunks (id, owner_key, document_id, chunk_index, content, embedding, embedding_model, embedding_vector)
+          VALUES (${chunkID}, ${ownerKey}, ${id}, ${index}, ${chunk}, ${JSON.stringify(embedding.values)}::jsonb, ${embedding.model}, ${vectorLiteral(embedding.values)}::vector)
+        `
+      } else {
+        await db`
+          INSERT INTO nally_document_chunks (id, owner_key, document_id, chunk_index, content, embedding, embedding_model)
+          VALUES (${chunkID}, ${ownerKey}, ${id}, ${index}, ${chunk}, ${embedding ? JSON.stringify(embedding.values) : null}::jsonb, ${embedding?.model ?? null})
+        `
+      }
     }
+  } catch (error) {
+    // Neon HTTP queries are independent requests. Remove a partially indexed
+    // document so future retrieval cannot mistake an incomplete import for success.
+    try {
+      await db`DELETE FROM nally_documents WHERE id = ${id} AND owner_key = ${ownerKey}`
+    } catch (cleanupError) {
+      console.error("[nally-memory] failed to clean incomplete knowledge document", cleanupError instanceof Error ? cleanupError.message : "unknown error")
+    }
+    throw error
   }
   return { id, title, chunks: chunks.length, duplicate: false, embeddings: embeddingConfig() ? "configured" : "not-configured-yet" }
 }
