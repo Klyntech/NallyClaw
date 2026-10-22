@@ -9,6 +9,7 @@ type MessageLike = {
   providerID?: string
   modelID?: string
   parts?: any[]
+  outcome?: "succeeded" | "failed" | "interrupted"
 }
 
 type MessageList = {
@@ -18,6 +19,7 @@ type MessageList = {
 export type CompletedAssistantMessages = {
   messages: MessageLike[]
   userIndex: number
+  terminalOutcome?: "succeeded" | "failed" | "interrupted"
 }
 
 /** Default wall-clock wait for a final assistant message (Telegram text). */
@@ -115,6 +117,19 @@ export class AssistantWaitTimeoutError extends Error {
   }
 }
 
+export class AssistantPollingError extends Error {
+  readonly consecutiveFailures: number
+  readonly elapsedMs: number
+
+  constructor(opts: { consecutiveFailures: number; elapsedMs: number; lastError: unknown }) {
+    const detail = opts.lastError instanceof Error ? opts.lastError.message : String(opts.lastError)
+    super(`Unable to read assistant progress after ${opts.consecutiveFailures} consecutive polling failures: ${detail.slice(0, 180)}`)
+    this.name = "AssistantPollingError"
+    this.consecutiveFailures = opts.consecutiveFailures
+    this.elapsedMs = opts.elapsedMs
+  }
+}
+
 export async function waitForAssistantMessage(
   getMessages: () => Promise<MessageList | undefined>,
   userMessageID: string,
@@ -125,6 +140,8 @@ export async function waitForAssistantMessage(
     now?: () => number
     sleep?: (ms: number) => Promise<void>
     onProgress?: (status: string) => void | Promise<void>
+    onPollError?: (error: unknown, consecutiveFailures: number) => void | Promise<void>
+    maxConsecutivePollErrors?: number
   } = {},
 ): Promise<CompletedAssistantMessages> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_ASSISTANT_TIMEOUT_MS
@@ -137,16 +154,59 @@ export async function waitForAssistantMessage(
   let lastProgress = ""
   let lastProgressAt = startedAt
   let lastFingerprint = ""
+  let consecutivePollErrors = 0
+  const maxConsecutivePollErrors = options.maxConsecutivePollErrors ?? 5
 
   while (true) {
-    const result = await getMessages()
+    const beforePoll = deadline - now()
+    if (beforePoll <= 0) {
+      throw new AssistantWaitTimeoutError({
+        lastProgress,
+        elapsedMs: now() - startedAt,
+        reason: "deadline",
+      })
+    }
+
+    let result: MessageList | undefined
+    try {
+      result = await getMessages()
+      consecutivePollErrors = 0
+    } catch (error) {
+      consecutivePollErrors++
+      await options.onPollError?.(error, consecutivePollErrors)
+      if (consecutivePollErrors >= maxConsecutivePollErrors) {
+        throw new AssistantPollingError({
+          consecutiveFailures: consecutivePollErrors,
+          elapsedMs: now() - startedAt,
+          lastError: error,
+        })
+      }
+      const remainingAfterError = deadline - now()
+      if (remainingAfterError <= 0) {
+        throw new AssistantWaitTimeoutError({
+          lastProgress,
+          elapsedMs: now() - startedAt,
+          reason: "deadline",
+        })
+      }
+      await sleep(Math.min(pollIntervalMs, remainingAfterError))
+      continue
+    }
+
     const messages = Array.isArray(result?.data) ? result.data : []
     const userIndex = messages.findIndex((message) => message.id === userMessageID)
 
     if (userIndex >= 0) {
-      // Messages are fetched newest-first. Only inspect assistant messages newer than
-      // the exact user message admitted by this Telegram update.
+      // Messages are fetched newest-first. Only inspect terminal states and assistant
+      // iterations newer than the exact user message admitted by this Telegram update.
       const candidates = messages.slice(0, userIndex)
+      const terminal = candidates.find(
+        (message) => message.type === "idle" &&
+          (message.outcome === "succeeded" || message.outcome === "failed" || message.outcome === "interrupted"),
+      )
+      if (terminal?.outcome) {
+        return { messages, userIndex, terminalOutcome: terminal.outcome }
+      }
       const assistant = candidates.find((message) => message.type === "assistant")
       // An assistant iteration ending with "tool-calls" is not the final answer:
       // the runtime still has to execute the tool and continue the same turn.
