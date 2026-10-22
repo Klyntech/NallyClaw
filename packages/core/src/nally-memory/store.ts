@@ -436,6 +436,17 @@ export async function rememberMemory(input: {
     LIMIT 1
   `
   const id = typeof existing[0]?.id === "string" ? existing[0].id : `mem_${crypto.randomUUID()}`
+  if (existing[0]?.id && !embedding) {
+    // A temporary embedding outage must not erase a previously valid vector
+    // when the user repeats an already-stored fact.
+    await db`
+      UPDATE nally_memories SET category = ${category}, content = ${content},
+        tags_json = ${JSON.stringify(tags)}::jsonb, importance = ${importance},
+        source_session = ${input.sessionID}, updated_at = now(), forgotten_at = NULL
+      WHERE id = ${id} AND owner_key = ${ownerKey}
+    `
+    return { id, category, content, tags, importance, embedding: "existing-embedding-preserved" }
+  }
   if (embedding && vectorAvailable) {
     await db`
       INSERT INTO nally_memories (id, owner_key, category, content, tags_json, importance, embedding, embedding_model, embedding_vector, source_session, created_at, updated_at, forgotten_at)
@@ -511,6 +522,17 @@ export async function updateMemory(input: {
   const category = input.category ?? (current[0].category as Category)
   const importance = input.importance ?? Number(current[0].importance ?? 3)
   const tags = input.tags ?? tagsOf(current[0].tags_json)
+  const contentChanged = content !== String(current[0].content)
+  if (!contentChanged) {
+    // Editing metadata should not make memory dependent on the embedding API
+    // or erase a valid existing vector during a provider outage.
+    await db`
+      UPDATE nally_memories SET category = ${category}, importance = ${importance},
+        tags_json = ${JSON.stringify(tags)}::jsonb, updated_at = now()
+      WHERE id = ${input.memoryID} AND owner_key = ${ownerKey} AND forgotten_at IS NULL
+    `
+    return { updated: true, id: input.memoryID, embedding: "preserved" }
+  }
   const embedding = await optionalEmbedding(content, "passage")
   if (embedding && vectorAvailable) {
     await db`
