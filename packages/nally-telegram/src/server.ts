@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
 import { AssistantPollingError, AssistantWaitTimeoutError, waitForAssistantMessage } from "./wait-for-response"
+import { createSessionEventSignal, type SessionEventSignal } from "./session-events"
 import { getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
 
 const host = "127.0.0.1"
@@ -143,6 +144,7 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
   let stage = "waiting for agent readiness"
   let sessionID: string | undefined
   let userMessageID: string | undefined
+  let eventSignal: SessionEventSignal | undefined
   const startedAt = Date.now()
   try {
     await reportProgress("🤔 Thinking…")
@@ -177,6 +179,19 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
       sessions.set(message.userID, sessionID)
     }
 
+    // Subscribe before submitting so execution events cannot be missed between admission and waiting.
+    stage = "subscribing to session events"
+    eventSignal = await createSessionEventSignal({
+      url: new URL("/api/event", internalURL).toString(),
+      sessionID,
+      authorization: auth,
+    })
+    log(
+      eventSignal
+        ? `session event stream connected updateID=${message.updateID}`
+        : `session event stream unavailable; using snapshot polling updateID=${message.updateID}`,
+    )
+
     stage = "submitting prompt"
     await reportProgress("🤔 Thinking…")
     const admitted = await api(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
@@ -196,8 +211,9 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
       {
         timeoutMs: 120_000,
         stagnationMs: 90_000,
-        pollIntervalMs: 750,
+        pollIntervalMs: 2_000,
         sleep: (ms) => Bun.sleep(ms),
+        waitForUpdate: (ms) => eventSignal ? eventSignal.wait(ms) : Bun.sleep(ms),
         onProgress: reportProgress,
         onPollError: (error, count) => {
           if (count === 1 || count === 5) {
@@ -214,6 +230,9 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
         },
       },
     )
+
+    await eventSignal?.close()
+    eventSignal = undefined
 
     stage = "reading assistant response"
     if (terminalOutcome === "failed") {
@@ -266,6 +285,8 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
     }
     return "I couldn't get a text response from the model. Please try again; if this keeps happening, the model/provider configuration needs checking."
   } catch (error) {
+    await eventSignal?.close()
+    eventSignal = undefined
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
     log(`message failed updateID=${message.updateID} at stage "${stage}" after ${Date.now() - startedAt}ms`, detail)
 
