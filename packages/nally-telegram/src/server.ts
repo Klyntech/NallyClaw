@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
-import { AssistantPollingError, AssistantWaitTimeoutError, waitForAssistantMessage } from "./wait-for-response"
+import {
+  AssistantPollingError,
+  AssistantWaitTimeoutError,
+  DEFAULT_ASSISTANT_TIMEOUT_MS,
+  DEFAULT_HARD_CAP_MS,
+  DEFAULT_STAGNATION_MS,
+  DEFAULT_TOOL_GRACE_MS,
+  waitForAssistantMessage,
+} from "./wait-for-response"
 import { createSessionEventSignal, type SessionEventSignal } from "./session-events"
 import { getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
 
@@ -202,15 +210,16 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
     if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
 
     stage = "waiting for model completion"
-    // OpenCode's wait endpoint may return immediately if the wake-up has not started
-    // yet. The TUI follows the event stream; Telegram instead polls the durable message
-    // projection until this exact user turn has a completed assistant message.
+    // Align with OpenCode clients: SSE wakes + message projection decide completion.
+    // Base timeout is generous; active tools extend the deadline up to the hard cap.
     const { messages, userIndex, terminalOutcome } = await waitForAssistantMessage(
       () => api(`/api/session/${encodeURIComponent(sessionID!)}/message?limit=200&order=desc`, undefined, 5_000),
       userMessageID,
       {
-        timeoutMs: 120_000,
-        stagnationMs: 90_000,
+        timeoutMs: DEFAULT_ASSISTANT_TIMEOUT_MS,
+        hardCapMs: DEFAULT_HARD_CAP_MS,
+        toolGraceMs: DEFAULT_TOOL_GRACE_MS,
+        stagnationMs: DEFAULT_STAGNATION_MS,
         pollIntervalMs: 2_000,
         sleep: (ms) => Bun.sleep(ms),
         waitForUpdate: (ms) => eventSignal ? eventSignal.wait(ms) : Bun.sleep(ms),
@@ -318,11 +327,23 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
       } catch {}
       active = await isSessionActive(sessionID)
       log(
-        `wait diagnostics updateID=${message.updateID};reason=${error instanceof AssistantWaitTimeoutError ? error.reason : "polling"};userMessageVisible=${userMessageVisible};sessionActive=${active === undefined ? "unknown" : active};recent=${recentTypes}`,
+        `wait diagnostics updateID=${message.updateID};reason=${error instanceof AssistantWaitTimeoutError ? error.reason : "polling"};toolStillRunning=${error instanceof AssistantWaitTimeoutError ? error.toolStillRunning : "n/a"};userMessageVisible=${userMessageVisible};sessionActive=${active === undefined ? "unknown" : active};recent=${recentTypes}`,
       )
 
-      // A timeout alone does not stop the runtime. Interrupt only after a confirmed
-      // hard wait timeout and only when the runtime reports this session as active.
+      // Soft recovery: if a tool was still progressing when we hit the deadline/stagnation,
+      // leave the runtime alone so a retry can finish — matches OpenCode client behavior.
+      if (
+        error instanceof AssistantWaitTimeoutError &&
+        error.toolStillRunning &&
+        error.reason === "deadline" &&
+        userMessageVisible === "yes" &&
+        active === true
+      ) {
+        log(`timeout soft recovery (tool still running; no interrupt) updateID=${message.updateID}`)
+        return "I'm still working on that in the background (search/tools were still running). Send the request again in a moment and I'll pick up the result, or rephrase if you want a faster path."
+      }
+
+      // Hard interrupt only after confirmed timeout with no active tool progress.
       if (error instanceof AssistantWaitTimeoutError && userMessageVisible === "yes" && active === true) {
         try {
           const result = await interruptActiveSession(sessionID)
@@ -330,6 +351,12 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
         } catch (interruptError) {
           log(`timeout recovery could not interrupt active session (updateID=${message.updateID})`, interruptError)
         }
+      }
+
+      if (error instanceof AssistantWaitTimeoutError) {
+        return error.reason === "stagnation"
+          ? "I stopped making progress on that request. Please try again — a shorter question often helps."
+          : "That took too long to finish. Please try again; if it keeps happening, the model or search step may be overloaded."
       }
     }
     throw error

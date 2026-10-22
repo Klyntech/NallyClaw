@@ -146,6 +146,59 @@ describe("waitForAssistantMessage", () => {
     expect(progress).toContain("🌐 Fetching page…")
   })
 
+  test("extends the deadline while an active tool keeps progressing", async () => {
+    let clock = 0
+    let calls = 0
+    const result = await waitForAssistantMessage(
+      async () => {
+        calls++
+        // Base timeout is 300ms; without grace this would fail before completion.
+        if (calls < 5) {
+          return {
+            data: [
+              {
+                id: "msg-assistant",
+                type: "assistant",
+                content: [
+                  {
+                    type: "tool",
+                    tool: "websearch",
+                    state: { status: "running", title: `pass-${calls}` },
+                  },
+                ],
+              },
+              { id: "msg-user", type: "user" },
+            ],
+          }
+        }
+        return {
+          data: [
+            {
+              id: "msg-assistant",
+              type: "assistant",
+              finish: "stop",
+              time: { completed: "2026-10-22T21:00:00.000Z" },
+              content: [{ type: "text", text: "Match stats ready" }],
+            },
+            { id: "msg-user", type: "user" },
+          ],
+        }
+      },
+      "msg-user",
+      {
+        timeoutMs: 300,
+        hardCapMs: 5_000,
+        toolGraceMs: 400,
+        stagnationMs: 2_000,
+        pollIntervalMs: 100,
+        now: () => clock,
+        sleep: async (ms) => { clock += ms },
+      },
+    )
+    expect(result.messages[0]?.id).toBe("msg-assistant")
+    expect(calls).toBeGreaterThanOrEqual(5)
+  })
+
   test("does not treat an unchanged Thinking label as stalled while assistant content is progressing", async () => {
     let clock = 0
     let calls = 0

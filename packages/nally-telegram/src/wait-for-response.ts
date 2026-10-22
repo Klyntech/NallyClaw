@@ -23,7 +23,11 @@ export type CompletedAssistantMessages = {
 }
 
 /** Default wall-clock wait for a final assistant message (Telegram text). */
-export const DEFAULT_ASSISTANT_TIMEOUT_MS = 90_000
+export const DEFAULT_ASSISTANT_TIMEOUT_MS = 180_000
+/** Absolute ceiling for a single Telegram wait, even when tools keep progressing. */
+export const DEFAULT_HARD_CAP_MS = 600_000
+/** Extra time granted each time an active tool still shows progress. */
+export const DEFAULT_TOOL_GRACE_MS = 120_000
 /** Shorter wait for live voice calls — fail before the user stares at silence. */
 export const VOICE_ASSISTANT_TIMEOUT_MS = 60_000
 /** Allow slow model/tool turns to progress without failing on a generic status label. */
@@ -51,9 +55,27 @@ export function describeToolProgress(toolName: string): string {
   return "🛠 Using " + humanizeToolName(toolName) + " tool…"
 }
 
+function messageParts(message: MessageLike | undefined) {
+  if (!message) return []
+  if (Array.isArray(message.content)) return message.content
+  if (Array.isArray(message.parts)) return message.parts
+  return []
+}
+
+function hasActiveToolPart(message: MessageLike | undefined): boolean {
+  const parts = messageParts(message)
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const part = parts[index]
+    if (part?.type !== "tool") continue
+    const status = String(part.state?.status ?? "").toLowerCase()
+    if (!status || ["running", "pending", "input-streaming", "input-available"].includes(status)) return true
+  }
+  return false
+}
+
 function activeToolProgress(message: MessageLike | undefined): string {
   if (!message) return "🤔 Thinking…"
-  const parts = Array.isArray(message.content) ? message.content : Array.isArray(message.parts) ? message.parts : []
+  const parts = messageParts(message)
   for (let index = parts.length - 1; index >= 0; index--) {
     const part = parts[index]
     if (part?.type !== "tool") continue
@@ -73,7 +95,7 @@ function activeToolProgress(message: MessageLike | undefined): string {
 // Only metadata and text lengths are used; message text is never logged.
 function assistantProgressFingerprint(message: MessageLike | undefined): string {
   if (!message) return "no-assistant"
-  const parts = Array.isArray(message.content) ? message.content : Array.isArray(message.parts) ? message.parts : []
+  const parts = messageParts(message)
   return JSON.stringify({
     id: message.id ?? "",
     finish: message.finish ?? "",
@@ -102,8 +124,15 @@ export class AssistantWaitTimeoutError extends Error {
   readonly lastProgress: string
   readonly elapsedMs: number
   readonly reason: "deadline" | "stagnation"
+  /** True when a tool was still running at the moment of timeout (soft recovery preferred). */
+  readonly toolStillRunning: boolean
 
-  constructor(opts: { lastProgress: string; elapsedMs: number; reason: "deadline" | "stagnation" }) {
+  constructor(opts: {
+    lastProgress: string
+    elapsedMs: number
+    reason: "deadline" | "stagnation"
+    toolStillRunning?: boolean
+  }) {
     const hint = opts.lastProgress ? ` (last status: ${opts.lastProgress})` : ""
     super(
       opts.reason === "stagnation"
@@ -114,6 +143,7 @@ export class AssistantWaitTimeoutError extends Error {
     this.lastProgress = opts.lastProgress
     this.elapsedMs = opts.elapsedMs
     this.reason = opts.reason
+    this.toolStillRunning = opts.toolStillRunning === true
   }
 }
 
@@ -135,6 +165,8 @@ export async function waitForAssistantMessage(
   userMessageID: string,
   options: {
     timeoutMs?: number
+    hardCapMs?: number
+    toolGraceMs?: number
     stagnationMs?: number
     pollIntervalMs?: number
     now?: () => number
@@ -147,29 +179,36 @@ export async function waitForAssistantMessage(
   } = {},
 ): Promise<CompletedAssistantMessages> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_ASSISTANT_TIMEOUT_MS
+  const hardCapMs = options.hardCapMs ?? DEFAULT_HARD_CAP_MS
+  const toolGraceMs = options.toolGraceMs ?? DEFAULT_TOOL_GRACE_MS
   const stagnationMs = options.stagnationMs ?? DEFAULT_STAGNATION_MS
   const pollIntervalMs = options.pollIntervalMs ?? 500
   const now = options.now ?? Date.now
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const startedAt = now()
-  const deadline = startedAt + timeoutMs
+  let deadline = startedAt + timeoutMs
+  const hardCapAt = startedAt + hardCapMs
   let lastProgress = ""
   let lastProgressAt = startedAt
   let lastFingerprint = ""
   let consecutivePollErrors = 0
   let missingUserPolls = 0
   let pendingStatusReported = false
+  let toolStillRunning = false
   const maxConsecutivePollErrors = options.maxConsecutivePollErrors ?? 5
+
+  const throwDeadline = () => {
+    throw new AssistantWaitTimeoutError({
+      lastProgress,
+      elapsedMs: now() - startedAt,
+      reason: "deadline",
+      toolStillRunning,
+    })
+  }
 
   while (true) {
     const beforePoll = deadline - now()
-    if (beforePoll <= 0) {
-      throw new AssistantWaitTimeoutError({
-        lastProgress,
-        elapsedMs: now() - startedAt,
-        reason: "deadline",
-      })
-    }
+    if (beforePoll <= 0) throwDeadline()
 
     let result: MessageList | undefined
     try {
@@ -186,13 +225,7 @@ export async function waitForAssistantMessage(
         })
       }
       const remainingAfterError = deadline - now()
-      if (remainingAfterError <= 0) {
-        throw new AssistantWaitTimeoutError({
-          lastProgress,
-          elapsedMs: now() - startedAt,
-          reason: "deadline",
-        })
-      }
+      if (remainingAfterError <= 0) throwDeadline()
       await (options.waitForUpdate ?? sleep)(Math.min(pollIntervalMs, remainingAfterError))
       continue
     }
@@ -223,9 +256,16 @@ export async function waitForAssistantMessage(
       const progress = activeToolProgress(assistant)
       const fingerprint = assistantProgressFingerprint(assistant)
       const currentTime = now()
+      toolStillRunning = hasActiveToolPart(assistant)
+
       if (fingerprint !== lastFingerprint) {
         lastFingerprint = fingerprint
         lastProgressAt = currentTime
+        // OpenCode-style: keep waiting while tools are actively progressing instead of
+        // killing the turn on a fixed wall clock (matches TUI/dev client behavior).
+        if (toolStillRunning) {
+          deadline = Math.min(hardCapAt, Math.max(deadline, currentTime + toolGraceMs))
+        }
       }
       if (progress !== lastProgress) {
         lastProgress = progress
@@ -236,6 +276,7 @@ export async function waitForAssistantMessage(
           lastProgress,
           elapsedMs: now() - startedAt,
           reason: "stagnation",
+          toolStillRunning,
         })
       }
     }
@@ -249,13 +290,7 @@ export async function waitForAssistantMessage(
     }
 
     const remaining = deadline - now()
-    if (remaining <= 0) {
-      throw new AssistantWaitTimeoutError({
-        lastProgress,
-        elapsedMs: now() - startedAt,
-        reason: "deadline",
-      })
-    }
+    if (remaining <= 0) throwDeadline()
     await (options.waitForUpdate ?? sleep)(Math.min(pollIntervalMs, remaining))
   }
 }
