@@ -93,6 +93,35 @@ describe("Telegram webhook", () => {
     expect(finalPayload.rich_message.markdown).toContain("**Done**")
   })
 
+  test("serializes turns from the same user and allows the next only after the first settles", async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const events: string[] = []
+    const { webhook } = makeWebhook(async (message) => {
+      events.push(`start:${message.text}`)
+      if (message.text === "first") await firstGate
+      events.push(`end:${message.text}`)
+      return `reply: ${message.text}`
+    })
+    const send = (id: number, text: string) => webhook.fetch(
+      new Request("https://example.test/telegram/webhook", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": SECRET },
+        body: JSON.stringify(update(id, 42, text)),
+      }),
+    )
+
+    await send(31, "first")
+    await Bun.sleep(15)
+    await send(32, "second")
+    await Bun.sleep(20)
+    expect(events).toEqual(["start:first"])
+
+    releaseFirst()
+    await Bun.sleep(100)
+    expect(events).toEqual(["start:first", "end:first", "start:second", "end:second"])
+  })
+
   test("falls back to HTML Markdown when Rich Messages is unavailable", async () => {
     const sent: { method: string; body: any }[] = []
     const webhook = createTelegramWebhook({
