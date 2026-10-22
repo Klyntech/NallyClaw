@@ -26,7 +26,7 @@ Tools appear in the agent as namespaced tools:
 - `memory_update`: update a memory's text, category, importance, or tags.
 - `memory_forget`: forget a specific memory.
 
-Memories are scoped to the Telegram user associated with the current session. They are not shared between different Telegram users. The system should retain useful information selectively, not every turn, and must never store access tokens or passwords as memories.
+For the personal deployment, Telegram and browser voice resolve to the same canonical owner when exactly one Telegram user ID is allowlisted, preserving existing `telegram:<id>` memories. Do not configure multiple Telegram users for a shared personal owner. The system should retain useful information selectively, not every turn, and must never store access tokens or passwords as memories. The agent prompt now explicitly directs Nally to save stable facts and explicit corrections, reuse relevant retrieved context, update stale facts, and never claim a save succeeded unless the memory tool confirms it.
 
 ## RAG / knowledge tools
 
@@ -39,8 +39,24 @@ Documents are split into bounded overlapping chunks and exact duplicate content 
 
 ## Database behavior
 
-Tables are created idempotently when the first memory/session-storage request is made. Neon may support the `vector` extension; the implementation attempts to enable it and use vector similarity. If the extension cannot be enabled, it stores vectors as JSON and uses bounded in-process cosine ranking, then lexical search as a fallback. Existing runtime SQLite data is not automatically imported into these new tables.
+Tables are created idempotently when the first memory/session-storage request is made. Neon may support the `vector` extension; the implementation attempts to enable it and use vector similarity. Retrieval now runs semantic and PostgreSQL full-text/keyword search together, then merges ranked candidates with reciprocal-rank fusion instead of returning only whichever search path ran first. Weak semantic-only matches are filtered, exact lexical matches remain eligible, and a vector query error falls back to lexical results. If the vector extension cannot be enabled, stored JSON embeddings use bounded cosine ranking before fusion. Temporary embedding outages no longer erase an existing embedding when a duplicate memory is re-saved or only its metadata is edited. Automatic retrieval failures are logged without logging the user's message or memory contents. Existing runtime SQLite data is not automatically imported into these new tables.
 
 ## Verification status
 
 A successful Docker build and a live Telegram test are required before treating this feature as production-verified. Test at least: remembering and recalling a fact, a second message after a service restart, one user's memory isolation from another user, indexing/searching a text note, forgetting it, and behavior when the embedding model is unset.
+
+
+## Retrieval evaluation checklist
+
+Run the unit tests for the hybrid rank fusion helper and the system-prompt memory guidance. Before calling memory production-stable, also run end-to-end checks on the deployed service:
+
+1. Save a named preference in Telegram, then ask a paraphrased question about it during browser voice.
+2. Save a project detail with an exact identifier, then ask using the identifier and using a paraphrase.
+3. Correct a previously saved fact and verify the latest correction wins rather than both versions being presented as current.
+4. Restart/redeploy the service and repeat recall.
+5. Disable embeddings temporarily and verify lexical recall still works.
+6. Query for an unrelated topic and verify unrelated memories are not injected.
+7. Verify a forgotten memory is absent from later automatic recall.
+8. Confirm memory failures produce a safe log category and do not break the agent response.
+
+The semantic threshold is an initial conservative default, not a proven universal value. Tune it only against a labeled set of Nally-specific recall questions; track Recall@k, irrelevant-context rate, correction freshness, and latency. A code change or green unit test alone does not prove production retrieval quality.
