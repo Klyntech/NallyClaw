@@ -53,13 +53,26 @@ export async function checkMemoryDatabase() {
   }
 }
 
+function normalizeRows(result: unknown): any[] {
+  // Neon normally returns an array of row objects. Some client configurations
+  // return a full result object instead; normalize both forms centrally.
+  if (Array.isArray(result)) return result
+  if (result && typeof result === "object" && Array.isArray((result as { rows?: unknown }).rows)) {
+    return (result as { rows: any[] }).rows
+  }
+  throw new Error("Neon query returned an unsupported result format.")
+}
+
 function sql() {
   const url = databaseURL()
   if (!url) throw new Error("Nally memory is not configured. Set NALLY_DATABASE_URL to the Neon PostgreSQL connection string in Render.")
-  // Force the rows-only return contract used throughout this module. A global Neon
-  // client setting can otherwise make tagged queries return { rows, fields, ... },
-  // which breaks callers that index the result directly (e.g. rows[0]).
-  return (sqlClient ??= neon(url, { fullResults: false, arrayMode: false }))
+  if (!sqlClient) {
+    const client = neon(url, { fullResults: false, arrayMode: false })
+    // Normalize every query so memory and session persistence share one result contract.
+    sqlClient = ((...args: any[]) =>
+      Promise.resolve((client as any)(...args)).then(normalizeRows)) as Sql
+  }
+  return sqlClient
 }
 
 async function ensureSchema() {
