@@ -104,10 +104,17 @@ async function ensureSchema() {
           source_event_id text,
           user_text text NOT NULL,
           assistant_text text NOT NULL,
+          embedding jsonb,
+          embedding_model text,
           created_at timestamptz NOT NULL DEFAULT now(),
           UNIQUE (source, source_event_id)
         )
       `
+      await db`ALTER TABLE nally_conversation_turns ADD COLUMN IF NOT EXISTS embedding jsonb`
+      await db`ALTER TABLE nally_conversation_turns ADD COLUMN IF NOT EXISTS embedding_model text`
+      if (vectorAvailable) {
+        await db`ALTER TABLE nally_conversation_turns ADD COLUMN IF NOT EXISTS embedding_vector vector`
+      }
       await db`
         CREATE INDEX IF NOT EXISTS nally_conversation_turns_user_created
         ON nally_conversation_turns (telegram_user_id, created_at DESC)
@@ -344,15 +351,31 @@ export async function saveConversationTurn(input: {
   const assistantText = input.assistantText.trim().slice(0, 40_000)
   if (!userText || !assistantText) throw new Error("Conversation turns require non-empty user and assistant text.")
   await ensureSchema()
-  const rows = await sql()`
-    INSERT INTO nally_conversation_turns
-      (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text)
-    VALUES
-      (${crypto.randomUUID()}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
-       ${input.sourceEventID ?? null}, ${userText}, ${assistantText})
-    ON CONFLICT (source, source_event_id) DO NOTHING
-    RETURNING id
-  `
+  const db = sql()
+  // Embeddings are an enhancement, never a prerequisite for durable history.
+  const embedding = await optionalEmbedding(`User: ${userText}\nNally: ${assistantText}`, "passage")
+  const id = crypto.randomUUID()
+  const rows = embedding && vectorAvailable
+    ? await db`
+        INSERT INTO nally_conversation_turns
+          (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text, embedding, embedding_model, embedding_vector)
+        VALUES
+          (${id}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
+           ${input.sourceEventID ?? null}, ${userText}, ${assistantText},
+           ${JSON.stringify(embedding.values)}::jsonb, ${embedding.model}, ${vectorLiteral(embedding.values)}::vector)
+        ON CONFLICT (source, source_event_id) DO NOTHING
+        RETURNING id
+      `
+    : await db`
+        INSERT INTO nally_conversation_turns
+          (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text, embedding, embedding_model)
+        VALUES
+          (${id}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
+           ${input.sourceEventID ?? null}, ${userText}, ${assistantText},
+           ${embedding ? JSON.stringify(embedding.values) : null}::jsonb, ${embedding?.model ?? null})
+        ON CONFLICT (source, source_event_id) DO NOTHING
+        RETURNING id
+      `
   // A duplicate webhook event is already durable; verify it exists before returning.
   if (input.sourceEventID && !rows[0]?.id) {
     const existing = await sql()`
@@ -381,6 +404,78 @@ export async function getRecentConversationTurns(userID: number, limit = 8): Pro
   ).map((row: any) => ({
     user_text: row.user_text,
     assistant_text: row.assistant_text,
+    created_at: String(row.created_at ?? ""),
+  }))
+}
+
+/** Search older conversation turns with lexical + semantic retrieval and RRF. */
+export async function searchConversationTurns(userID: number, query: string, limit = 4): Promise<ConversationTurn[]> {
+  if (query.trim().length < 2) return []
+  await ensureSchema()
+  const db = sql()
+  const boundedLimit = Math.max(1, Math.min(10, Math.floor(limit)))
+  const candidateLimit = Math.max(20, boundedLimit * 4)
+  const fts = lexicalQuery(query)
+  const match = pattern(query)
+  const lexical = fts
+    ? await db`
+        SELECT id, user_text, assistant_text, created_at,
+          ts_rank(to_tsvector('simple', user_text || ' ' || assistant_text), to_tsquery('simple', ${fts}))::float8 AS score
+        FROM nally_conversation_turns
+        WHERE telegram_user_id = ${String(userID)}
+          AND to_tsvector('simple', user_text || ' ' || assistant_text) @@ to_tsquery('simple', ${fts})
+        ORDER BY score DESC, created_at DESC
+        LIMIT ${candidateLimit}
+      `
+    : await db`
+        SELECT id, user_text, assistant_text, created_at
+        FROM nally_conversation_turns
+        WHERE telegram_user_id = ${String(userID)}
+          AND (user_text ILIKE ${match} OR assistant_text ILIKE ${match})
+        ORDER BY created_at DESC
+        LIMIT ${candidateLimit}
+      `
+
+  let semantic: any[] = []
+  const embedding = await optionalEmbedding(query, "query")
+  if (embedding && vectorAvailable) {
+    try {
+      semantic = await db`
+        SELECT id, user_text, assistant_text, created_at,
+          (1 - (embedding_vector <=> ${vectorLiteral(embedding.values)}::vector))::float8 AS similarity
+        FROM nally_conversation_turns
+        WHERE telegram_user_id = ${String(userID)}
+          AND embedding_vector IS NOT NULL AND embedding_model = ${embedding.model}
+        ORDER BY embedding_vector <=> ${vectorLiteral(embedding.values)}::vector
+        LIMIT ${candidateLimit}
+      `
+    } catch (error) {
+      console.warn("[nally-memory] conversation vector retrieval failed; using lexical results", error instanceof Error ? error.message : "unknown error")
+    }
+  } else if (embedding) {
+    try {
+      const rows = await db`
+        SELECT id, user_text, assistant_text, created_at, embedding
+        FROM nally_conversation_turns
+        WHERE telegram_user_id = ${String(userID)}
+          AND embedding IS NOT NULL AND embedding_model = ${embedding.model}
+        ORDER BY created_at DESC
+        LIMIT 1000
+      `
+      semantic = rows
+        .map((row: any) => ({ ...row, similarity: cosine(embedding.values, parseEmbedding(row.embedding) ?? []) }))
+        .filter((row: any) => row.similarity >= 0.25)
+        .sort((a: any, b: any) => b.similarity - a.similarity)
+        .slice(0, candidateLimit)
+    } catch (error) {
+      console.warn("[nally-memory] conversation fallback-vector retrieval failed; using lexical results", error instanceof Error ? error.message : "unknown error")
+    }
+  }
+
+  const fused = fuseMemoryCandidates(semantic, lexical, boundedLimit, 0.25)
+  return fused.map((row: any) => ({
+    user_text: String(row.user_text),
+    assistant_text: String(row.assistant_text),
     created_at: String(row.created_at ?? ""),
   }))
 }
