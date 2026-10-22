@@ -1,0 +1,3 @@
+# CI-only Bun test config. The repository root config intentionally disables root-level test discovery.
+[test]
+root = "."
