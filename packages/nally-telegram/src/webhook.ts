@@ -48,6 +48,8 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
 
   const request = options.fetch ?? fetch
   const seen = new Map<number, true>()
+  // Serialize turns for each authorized Telegram identity; different users remain independent.
+  const processingByUser = new Map<number, Promise<void>>()
 
   async function telegramCall(method: string, body: Record<string, unknown>) {
     const response = await request(`${TELEGRAM_API}/bot${options.token}/${method}`, {
@@ -168,41 +170,47 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
         if (oldest !== undefined) seen.delete(oldest)
       }
 
-      // Acknowledge Telegram immediately. Model/provider calls can take longer than
-      // Telegram's webhook delivery window; doing the work in the request path
-      // causes retries and duplicate processing while the model is still running.
-      void Promise.resolve().then(async () => {
-        let progressMessageID: number | undefined
-        let progressAvailable = true
-        let lastProgress = ""
-        const reportProgress: TelegramProgressReporter = async (status) => {
-          const normalized = status.trim().slice(0, 180)
-          if (!normalized || normalized === lastProgress || !progressAvailable) return
-          try {
-            if (progressMessageID === undefined) {
-              const created = await telegramCall("sendMessage", {
-                chat_id: chatID!,
-                text: normalized,
-                disable_web_page_preview: true,
-              })
-              if (typeof created?.message_id === "number") progressMessageID = created.message_id
-              else progressAvailable = false
-            } else {
-              await telegramCall("editMessageText", {
-                chat_id: chatID!,
-                message_id: progressMessageID,
-                text: normalized,
-                disable_web_page_preview: true,
-              })
-            }
-            lastProgress = normalized
-          } catch (progressError) {
-            progressAvailable = false
-            console.error("Telegram progress update failed", progressError instanceof Error ? progressError.message : String(progressError))
-          }
-        }
-
+      // Acknowledge Telegram immediately. Processing happens in the background, but turns
+      // for the same user are serialized so they cannot steer or race one another's session.
+      const previous = processingByUser.get(userID!)
+      let progressMessageID: number | undefined
+      let progressAvailable = true
+      let lastProgress = ""
+      const reportProgress: TelegramProgressReporter = async (status) => {
+        const normalized = status.trim().slice(0, 180)
+        if (!normalized || normalized === lastProgress || !progressAvailable) return
         try {
+          if (progressMessageID === undefined) {
+            const created = await telegramCall("sendMessage", {
+              chat_id: chatID!,
+              text: normalized,
+              disable_web_page_preview: true,
+            })
+            if (typeof created?.message_id === "number") progressMessageID = created.message_id
+            else progressAvailable = false
+          } else {
+            await telegramCall("editMessageText", {
+              chat_id: chatID!,
+              message_id: progressMessageID,
+              text: normalized,
+              disable_web_page_preview: true,
+            })
+          }
+          lastProgress = normalized
+        } catch (progressError) {
+          progressAvailable = false
+          console.error("Telegram progress update failed", progressError instanceof Error ? progressError.message : String(progressError))
+        }
+      }
+
+      const task = Promise.resolve().then(async () => {
+        try {
+          if (previous) {
+            await reportProgress("⏳ Waiting for your previous request…")
+            // A failed earlier handler must not poison the queue permanently.
+            await previous.catch(() => {})
+          }
+
           const reply = await options.onMessage({
             updateID: updateID!,
             chatID: chatID!,
@@ -223,6 +231,11 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
           }
         }
       })
+      processingByUser.set(userID!, task)
+      void task.then(
+        () => { if (processingByUser.get(userID!) === task) processingByUser.delete(userID!) },
+        () => { if (processingByUser.get(userID!) === task) processingByUser.delete(userID!) },
+      )
       return Response.json({ ok: true, accepted: true })
     },
   }
