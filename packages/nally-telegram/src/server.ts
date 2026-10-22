@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { createTelegramWebhook, type TelegramProgressReporter, type TelegramTextMessage } from "./webhook"
 import { selectedModel } from "./model-config"
-import { waitForAssistantMessage } from "./wait-for-response"
+import { AssistantPollingError, AssistantWaitTimeoutError, waitForAssistantMessage } from "./wait-for-response"
 import { getTelegramSession, saveTelegramSession } from "../../core/src/nally-memory/store"
 
 const host = "127.0.0.1"
@@ -82,6 +82,25 @@ function credentialPresence(name: string) {
   return process.env[name]?.trim() ? "present" : "missing"
 }
 
+async function isSessionActive(sessionID: string): Promise<boolean | undefined> {
+  try {
+    const response = await api("/api/session/active", undefined, 4_000)
+    const active = response?.data
+    if (!active || typeof active !== "object") return undefined
+    return Object.prototype.hasOwnProperty.call(active, sessionID)
+  } catch {
+    return undefined
+  }
+}
+
+async function interruptActiveSession(sessionID: string) {
+  return api(
+    `/api/session/${encodeURIComponent(sessionID)}/interrupt`,
+    { method: "POST", body: JSON.stringify({}) },
+    5_000,
+  )
+}
+
 function authFailureHint(error: any) {
   const reason = error?.reason ?? error?.data?.reason ?? error?.cause?.reason
   const message = [
@@ -122,13 +141,15 @@ function authFailureHint(error: any) {
 
 async function onMessage(message: TelegramTextMessage, reportProgress: TelegramProgressReporter): Promise<string> {
   let stage = "waiting for agent readiness"
+  let sessionID: string | undefined
+  let userMessageID: string | undefined
   const startedAt = Date.now()
   try {
     await reportProgress("🤔 Thinking…")
     // Telegram may deliver queued updates while this process is booting.
     await waitForAgent()
 
-    let sessionID = sessions.get(message.userID)
+    sessionID = sessions.get(message.userID)
     if (!sessionID) {
       stage = "restoring Telegram session"
       await reportProgress("🗂️ Restoring conversation…")
@@ -162,20 +183,51 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
       method: "POST",
       body: JSON.stringify({ text: message.text, metadata: { channel: "telegram", updateID: message.updateID } }),
     }, 120_000)
-    const userMessageID = admitted.data?.id
+    userMessageID = admitted.data?.id
     if (typeof userMessageID !== "string" || !userMessageID) throw new Error("agent did not accept the message")
 
     stage = "waiting for model completion"
     // OpenCode's wait endpoint may return immediately if the wake-up has not started
     // yet. The TUI follows the event stream; Telegram instead polls the durable message
     // projection until this exact user turn has a completed assistant message.
-    const { messages, userIndex } = await waitForAssistantMessage(
-      () => api(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200&order=desc`),
+    const { messages, userIndex, terminalOutcome } = await waitForAssistantMessage(
+      () => api(`/api/session/${encodeURIComponent(sessionID!)}/message?limit=200&order=desc`, undefined, 5_000),
       userMessageID,
-      { timeoutMs: 120_000, stagnationMs: 90_000, pollIntervalMs: 500, sleep: (ms) => Bun.sleep(ms), onProgress: reportProgress },
+      {
+        timeoutMs: 120_000,
+        stagnationMs: 90_000,
+        pollIntervalMs: 750,
+        sleep: (ms) => Bun.sleep(ms),
+        onProgress: reportProgress,
+        onPollError: (error, count) => {
+          if (count === 1 || count === 5) {
+            log(`progress poll failed (${count} consecutive failures)`, error)
+          }
+        },
+        onUserMessagePending: async () => {
+          const active = await isSessionActive(sessionID!)
+          await reportProgress(
+            active === true
+              ? "🧵 Waiting for the current turn to finish…"
+              : "⏳ Waiting for your request to enter the conversation…",
+          )
+        },
+      },
     )
 
     stage = "reading assistant response"
+    if (terminalOutcome === "failed") {
+      log(`runtime marked turn failed (updateID=${message.updateID}; session=${sessionID})`)
+      return "I couldn't finish that turn. The execution stopped before I could prepare a reply; please try once more."
+    }
+    if (terminalOutcome === "interrupted") {
+      log(`runtime marked turn interrupted (updateID=${message.updateID}; session=${sessionID})`)
+      return "That turn was interrupted before I could finish. Please send the request again."
+    }
+    if (terminalOutcome === "succeeded") {
+      log(`runtime turn succeeded without a completed assistant message (updateID=${message.updateID}; session=${sessionID})`)
+      return "The request finished, but I couldn't recover a text reply. Please try again."
+    }
     await reportProgress("✍️ Preparing response…")
     const candidates = userIndex >= 0 ? messages.slice(0, userIndex) : []
     const assistantDiagnostics: string[] = []
@@ -216,6 +268,49 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
   } catch (error) {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
     log(`message failed at stage "${stage}" after ${Date.now() - startedAt}ms`, detail)
+
+    if (sessionID && userMessageID && (error instanceof AssistantWaitTimeoutError || error instanceof AssistantPollingError)) {
+      let userMessageVisible = "unknown"
+      let recentTypes = "unavailable"
+      let active: boolean | undefined
+      try {
+        const snapshot = await api(
+          `/api/session/${encodeURIComponent(sessionID)}/message?limit=12&order=desc`,
+          undefined,
+          4_000,
+        )
+        const recent = Array.isArray(snapshot?.data) ? snapshot.data : []
+        userMessageVisible = recent.some((item: any) => item?.id === userMessageID) ? "yes" : "no"
+        recentTypes = recent.slice(0, 8).map((item: any) =>
+          item?.type === "idle" ? `idle:${String(item?.outcome ?? "unknown")}` : String(item?.type ?? "unknown"),
+        ).join(",") || "empty"
+        const latestAssistant = recent.find((item: any) => item?.type === "assistant")
+        if (latestAssistant) {
+          const parts = Array.isArray(latestAssistant.content) ? latestAssistant.content : []
+          const partsSummary = parts.slice(0, 10).map((part: any) => {
+            const status = part?.state?.status ? `:${String(part.state.status)}` : ""
+            const textLength = typeof part?.text === "string" ? `:${part.text.length}chars` : ""
+            return `${String(part?.type ?? "unknown")}${status}${textLength}`
+          }).join("/")
+          recentTypes += `;assistantFinish=${String(latestAssistant.finish ?? "unset")};assistantError=${latestAssistant.error ? "present" : "none"};parts=${partsSummary || "none"}`
+        }
+      } catch {}
+      active = await isSessionActive(sessionID)
+      log(
+        `wait diagnostics updateID=${message.updateID};reason=${error instanceof AssistantWaitTimeoutError ? error.reason : "polling"};userMessageVisible=${userMessageVisible};sessionActive=${active === undefined ? "unknown" : active};recent=${recentTypes}`,
+      )
+
+      // A timeout alone does not stop the runtime. Interrupt only after a confirmed
+      // hard wait timeout and only when the runtime reports this session as active.
+      if (error instanceof AssistantWaitTimeoutError && active === true) {
+        try {
+          const result = await interruptActiveSession(sessionID)
+          log(`timeout recovery requested session interruption (updateID=${message.updateID}; accepted=${result?.interrupted === true})`)
+        } catch (interruptError) {
+          log(`timeout recovery could not interrupt active session (updateID=${message.updateID})`, interruptError)
+        }
+      }
+    }
     throw error
   }
 }
