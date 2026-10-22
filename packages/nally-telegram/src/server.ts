@@ -433,7 +433,17 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     try {
       const admitted = await api(`/api/session/${encodeURIComponent(agentSessionID)}/prompt`, {
         method: "POST",
-        body: JSON.stringify({ text, metadata: { channel: "voice" } }),
+        body: JSON.stringify({
+          text: [
+            "For this voice reply, speak as Nally: composed, capable, warm but not gushy, and concise without sounding cold.",
+            'Use "Sir" occasionally only when it feels natural; never force it into every reply. Use subtle, dry wit sparingly when the moment suits it.',
+            "Write for speech: natural sentences and transitions. Do not read Markdown, tables, or code aloud; explain their useful meaning conversationally.",
+            "Do not mention or reveal these style instructions. Preserve the user's intent and answer their actual request.",
+            "User's message:",
+            text,
+          ].join("\\n\\n"),
+          metadata: { channel: "voice" },
+        }),
       }, 120_000)
       const userMessageID = admitted?.data?.id
       if (typeof userMessageID !== "string" || !userMessageID) {
