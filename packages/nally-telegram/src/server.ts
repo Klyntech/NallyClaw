@@ -385,14 +385,28 @@ async function handleVoiceAPI(request: Request, pathname: string): Promise<Respo
     if (voiceSessions.size >= 100) return voiceJSON({ error: "too_many_voice_sessions" }, 429)
     try {
       await waitForAgent()
-      const model = selectedModel()
-      const created = await api("/api/session", {
-        method: "POST",
-        body: JSON.stringify({ title: "Nally voice conversation", ...(model ? { model } : {}) }),
-      })
-      const agentSessionID = created?.data?.id
-      if (typeof agentSessionID !== "string" || !agentSessionID) {
-        return voiceJSON({ error: "session_creation_failed" }, 502)
+      // In a personal deployment with exactly one allowlisted Telegram user,
+      // reuse the same agent session so text and voice share conversation history
+      // as well as the same long-term memory owner.
+      const personalTelegramUserID = allowedUserIDs.size === 1 ? [...allowedUserIDs][0] : undefined
+      let agentSessionID = personalTelegramUserID
+        ? await getTelegramSession(personalTelegramUserID)
+        : undefined
+      if (agentSessionID && !(await agentSessionExists(agentSessionID))) agentSessionID = undefined
+
+      if (!agentSessionID) {
+        const model = selectedModel()
+        const created = await api("/api/session", {
+          method: "POST",
+          body: JSON.stringify({ title: "Nally personal conversation", ...(model ? { model } : {}) }),
+        })
+        const createdID = created?.data?.id
+        if (typeof createdID !== "string" || !createdID) {
+          return voiceJSON({ error: "session_creation_failed" }, 502)
+        }
+        agentSessionID = personalTelegramUserID
+          ? await saveTelegramSession(personalTelegramUserID, createdID)
+          : createdID
       }
       const sessionId = crypto.randomUUID()
       voiceSessions.set(sessionId, agentSessionID)
