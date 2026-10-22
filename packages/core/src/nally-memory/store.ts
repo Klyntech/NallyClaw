@@ -260,7 +260,20 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
     RETURNING session_id
   `
   const saved = inserted[0]?.session_id
-  if (typeof saved === "string" && saved === sessionID) return saved
+  if (typeof saved === "string" && saved.length > 0) {
+    // Concurrent Telegram/voice requests for the same user can race while creating
+    // sessions. PostgreSQL's upsert may return the row written by this request even
+    // though another request has since replaced the canonical mapping. Prefer the
+    // actual persisted mapping instead of failing the whole user message.
+    const current = await sql`
+      SELECT session_id FROM nally_telegram_sessions
+      WHERE telegram_user_id = ${String(userID)}
+      LIMIT 1
+    `
+    const canonical = current[0]?.session_id
+    if (typeof canonical === "string" && canonical.length > 0) return canonical
+    return saved
+  }
 
   const existing = await sql`
     SELECT session_id FROM nally_telegram_sessions
@@ -268,8 +281,8 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
     LIMIT 1
   `
   const result = existing[0]?.session_id
-  if (typeof result === "string" && result === sessionID) return result
-  throw new Error("Neon did not confirm the Telegram session mapping; refusing to report it as saved.")
+  if (typeof result === "string" && result.length > 0) return result
+  throw new Error("Neon did not return a durable Telegram session mapping after the upsert.")
 }
 
 function tagsOf(input: unknown): string[] {
