@@ -141,6 +141,7 @@ export async function waitForAssistantMessage(
     sleep?: (ms: number) => Promise<void>
     onProgress?: (status: string) => void | Promise<void>
     onPollError?: (error: unknown, consecutiveFailures: number) => void | Promise<void>
+    onUserMessagePending?: (elapsedMs: number) => void | Promise<void>
     maxConsecutivePollErrors?: number
   } = {},
 ): Promise<CompletedAssistantMessages> {
@@ -155,6 +156,8 @@ export async function waitForAssistantMessage(
   let lastProgressAt = startedAt
   let lastFingerprint = ""
   let consecutivePollErrors = 0
+  let missingUserPolls = 0
+  let pendingStatusReported = false
   const maxConsecutivePollErrors = options.maxConsecutivePollErrors ?? 5
 
   while (true) {
@@ -197,6 +200,8 @@ export async function waitForAssistantMessage(
     const userIndex = messages.findIndex((message) => message.id === userMessageID)
 
     if (userIndex >= 0) {
+      missingUserPolls = 0
+      pendingStatusReported = false
       // Messages are fetched newest-first. Only inspect terminal states and assistant
       // iterations newer than the exact user message admitted by this Telegram update.
       const candidates = messages.slice(0, userIndex)
@@ -204,14 +209,14 @@ export async function waitForAssistantMessage(
         (message) => message.type === "idle" &&
           (message.outcome === "succeeded" || message.outcome === "failed" || message.outcome === "interrupted"),
       )
-      if (terminal?.outcome) {
-        return { messages, userIndex, terminalOutcome: terminal.outcome }
-      }
       const assistant = candidates.find((message) => message.type === "assistant")
-      // An assistant iteration ending with "tool-calls" is not the final answer:
-      // the runtime still has to execute the tool and continue the same turn.
+      // Prefer a finished assistant iteration, especially on successful turns where the idle
+      // lifecycle marker is newer than the assistant's final response.
       if (isCompletedAssistantIteration(assistant) && !isToolCallIteration(assistant)) {
         return { messages, userIndex }
+      }
+      if (terminal?.outcome) {
+        return { messages, userIndex, terminalOutcome: terminal.outcome }
       }
 
       const progress = activeToolProgress(assistant)
@@ -231,6 +236,14 @@ export async function waitForAssistantMessage(
           elapsedMs: now() - startedAt,
           reason: "stagnation",
         })
+      }
+    }
+
+    if (userIndex < 0) {
+      missingUserPolls++
+      if (missingUserPolls >= 3 && !pendingStatusReported) {
+        pendingStatusReported = true
+        await options.onUserMessagePending?.(now() - startedAt)
       }
     }
 
