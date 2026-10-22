@@ -131,6 +131,14 @@ export const Plugin = {
           if (!memoryDatabaseConfigured()) return
           const latest = latestUserText(event)
           if (!latest || latest.text.trim().length < 3) return
+          const previous = event.messages[latest.index - 1]
+          const previousText = previous?.role === "user"
+            ? previous.content.filter((part) => part.type === "text").map((part) => part.type === "text" ? part.text : "").join("\n")
+            : ""
+          // The context hook can run more than once for the same turn (for
+          // example, before a model call and during compaction). Do not inject
+          // the same retrieved context twice.
+          if (previousText.includes("[NALLY_MEMORY_CONTEXT]")) return
           const result = await autoRetrieve(event.sessionID, latest.text)
           if (!result.memories.length && !result.knowledge.length) return
 
