@@ -20,6 +20,13 @@ export type CompletedAssistantMessages = {
   userIndex: number
 }
 
+/** Default wall-clock wait for a final assistant message (Telegram text). */
+export const DEFAULT_ASSISTANT_TIMEOUT_MS = 90_000
+/** Shorter wait for live voice calls — fail before the user stares at silence. */
+export const VOICE_ASSISTANT_TIMEOUT_MS = 60_000
+/** If progress status does not change for this long, treat the turn as stuck. */
+export const DEFAULT_STAGNATION_MS = 45_000
+
 function humanizeToolName(value: string) {
   const leaf = value.split(/[.:/]/).filter(Boolean).pop() ?? value
   const cleaned = leaf.replace(/^mcp__[^_]+__/, "").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim()
@@ -65,23 +72,46 @@ function isCompletedAssistantIteration(message: MessageLike | undefined) {
     !!(message.time?.completed || message.error || message.finish)
 }
 
+export class AssistantWaitTimeoutError extends Error {
+  readonly lastProgress: string
+  readonly elapsedMs: number
+  readonly reason: "deadline" | "stagnation"
+
+  constructor(opts: { lastProgress: string; elapsedMs: number; reason: "deadline" | "stagnation" }) {
+    const hint = opts.lastProgress ? ` (last status: ${opts.lastProgress})` : ""
+    super(
+      opts.reason === "stagnation"
+        ? `Timed out waiting for a completed assistant message: no progress for too long${hint}`
+        : `Timed out waiting for a completed assistant message${hint}`,
+    )
+    this.name = "AssistantWaitTimeoutError"
+    this.lastProgress = opts.lastProgress
+    this.elapsedMs = opts.elapsedMs
+    this.reason = opts.reason
+  }
+}
+
 export async function waitForAssistantMessage(
   getMessages: () => Promise<MessageList | undefined>,
   userMessageID: string,
   options: {
     timeoutMs?: number
+    stagnationMs?: number
     pollIntervalMs?: number
     now?: () => number
     sleep?: (ms: number) => Promise<void>
     onProgress?: (status: string) => void | Promise<void>
   } = {},
 ): Promise<CompletedAssistantMessages> {
-  const timeoutMs = options.timeoutMs ?? 120_000
+  const timeoutMs = options.timeoutMs ?? DEFAULT_ASSISTANT_TIMEOUT_MS
+  const stagnationMs = options.stagnationMs ?? DEFAULT_STAGNATION_MS
   const pollIntervalMs = options.pollIntervalMs ?? 500
   const now = options.now ?? Date.now
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-  const deadline = now() + timeoutMs
+  const startedAt = now()
+  const deadline = startedAt + timeoutMs
   let lastProgress = ""
+  let lastProgressAt = startedAt
 
   while (true) {
     const result = await getMessages()
@@ -102,13 +132,24 @@ export async function waitForAssistantMessage(
       const progress = activeToolProgress(assistant)
       if (progress !== lastProgress) {
         lastProgress = progress
+        lastProgressAt = now()
         await options.onProgress?.(progress)
+      } else if (now() - lastProgressAt >= stagnationMs) {
+        throw new AssistantWaitTimeoutError({
+          lastProgress,
+          elapsedMs: now() - startedAt,
+          reason: "stagnation",
+        })
       }
     }
 
     const remaining = deadline - now()
     if (remaining <= 0) {
-      throw new Error("Timed out waiting for a completed assistant message")
+      throw new AssistantWaitTimeoutError({
+        lastProgress,
+        elapsedMs: now() - startedAt,
+        reason: "deadline",
+      })
     }
     await sleep(Math.min(pollIntervalMs, remaining))
   }
