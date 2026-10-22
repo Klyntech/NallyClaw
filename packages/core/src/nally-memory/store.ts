@@ -352,30 +352,18 @@ export async function saveConversationTurn(input: {
   if (!userText || !assistantText) throw new Error("Conversation turns require non-empty user and assistant text.")
   await ensureSchema()
   const db = sql()
-  // Embeddings are an enhancement, never a prerequisite for durable history.
-  const embedding = await optionalEmbedding(`User: ${userText}\nNally: ${assistantText}`, "passage")
+  // Persist the transcript first. Embedding-provider latency or outages must not
+  // delay or prevent the durable conversation write.
   const id = crypto.randomUUID()
-  const rows = embedding && vectorAvailable
-    ? await db`
-        INSERT INTO nally_conversation_turns
-          (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text, embedding, embedding_model, embedding_vector)
-        VALUES
-          (${id}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
-           ${input.sourceEventID ?? null}, ${userText}, ${assistantText},
-           ${JSON.stringify(embedding.values)}::jsonb, ${embedding.model}, ${vectorLiteral(embedding.values)}::vector)
-        ON CONFLICT (source, source_event_id) DO NOTHING
-        RETURNING id
-      `
-    : await db`
-        INSERT INTO nally_conversation_turns
-          (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text, embedding, embedding_model)
-        VALUES
-          (${id}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
-           ${input.sourceEventID ?? null}, ${userText}, ${assistantText},
-           ${embedding ? JSON.stringify(embedding.values) : null}::jsonb, ${embedding?.model ?? null})
-        ON CONFLICT (source, source_event_id) DO NOTHING
-        RETURNING id
-      `
+  const rows = await db`
+    INSERT INTO nally_conversation_turns
+      (id, telegram_user_id, session_id, source, source_event_id, user_text, assistant_text)
+    VALUES
+      (${id}, ${String(input.userID)}, ${input.sessionID}, ${input.source},
+       ${input.sourceEventID ?? null}, ${userText}, ${assistantText})
+    ON CONFLICT (source, source_event_id) DO NOTHING
+    RETURNING id
+  `
   // A duplicate webhook event is already durable; verify it exists before returning.
   if (input.sourceEventID && !rows[0]?.id) {
     const existing = await sql()`
@@ -384,6 +372,32 @@ export async function saveConversationTurn(input: {
       LIMIT 1
     `
     if (!existing[0]?.id) throw new Error("Conversation turn write could not be verified.")
+  }
+  if (rows.length > 0) {
+    const embedding = await optionalEmbedding(`User: ${userText}\nNally: ${assistantText}`, "passage")
+    if (embedding) {
+      try {
+        if (vectorAvailable) {
+          await db`
+            UPDATE nally_conversation_turns
+            SET embedding = ${JSON.stringify(embedding.values)}::jsonb,
+                embedding_model = ${embedding.model},
+                embedding_vector = ${vectorLiteral(embedding.values)}::vector
+            WHERE id = ${id}
+          `
+        } else {
+          await db`
+            UPDATE nally_conversation_turns
+            SET embedding = ${JSON.stringify(embedding.values)}::jsonb,
+                embedding_model = ${embedding.model}
+            WHERE id = ${id}
+          `
+        }
+      } catch (error) {
+        // Conversation durability already succeeded; semantic indexing can retry later.
+        console.warn("[nally-memory] conversation embedding save failed", error instanceof Error ? error.message : "unknown error")
+      }
+    }
   }
   return { saved: true, inserted: rows.length > 0 }
 }
