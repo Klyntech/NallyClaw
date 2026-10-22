@@ -60,7 +60,7 @@ describe("buildConversationContext", () => {
       [older],
       "Continue the implementation",
     )
-    expect(result.match(/What was the NallyClaw branch\?/g)).toHaveLength(1)
+    expect(result.split("What was the NallyClaw branch?").length - 1).toBe(1)
     expect(result).toContain("Conversation turns are saved in Neon.")
     expect(result).toContain("Current user message:\nContinue the implementation")
   })
