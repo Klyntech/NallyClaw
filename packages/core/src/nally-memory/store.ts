@@ -30,7 +30,6 @@ type Sql = ReturnType<typeof neon>
 let sqlClient: Sql | undefined
 let schemaPromise: Promise<void> | undefined
 let vectorAvailable = false
-const volatileSessions = new Map<number, string>()
 
 const databaseURL = () =>
   process.env.NALLY_DATABASE_URL?.trim() ||
@@ -228,7 +227,7 @@ async function ownerForSession(sessionID: string) {
 }
 
 export async function getTelegramSession(userID: number): Promise<string | undefined> {
-  if (!memoryDatabaseConfigured()) return volatileSessions.get(userID)
+  // Session mappings must be durable too: never "restore" a session from process memory.
   await ensureSchema()
   const rows = await sql`
     SELECT session_id FROM nally_telegram_sessions
@@ -236,14 +235,11 @@ export async function getTelegramSession(userID: number): Promise<string | undef
     LIMIT 1
   `
   const sessionID = rows[0]?.session_id
-  if (typeof sessionID !== "string") return volatileSessions.get(userID)
-  volatileSessions.set(userID, sessionID)
-  return sessionID
+  return typeof sessionID === "string" ? sessionID : undefined
 }
 
 export async function saveTelegramSession(userID: number, sessionID: string): Promise<string> {
-  volatileSessions.set(userID, sessionID)
-  if (!memoryDatabaseConfigured()) return sessionID
+  // Do not return success until Neon confirms the mapping was persisted.
   await ensureSchema()
   const inserted = await sql`
     INSERT INTO nally_telegram_sessions (telegram_user_id, session_id)
@@ -251,18 +247,17 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
     ON CONFLICT (telegram_user_id) DO UPDATE SET session_id = EXCLUDED.session_id, updated_at = now()
     RETURNING session_id
   `
-  if (typeof inserted[0]?.session_id === "string") {
-    volatileSessions.set(userID, inserted[0].session_id)
-    return inserted[0].session_id
-  }
+  const saved = inserted[0]?.session_id
+  if (typeof saved === "string" && saved === sessionID) return saved
+
   const existing = await sql`
     SELECT session_id FROM nally_telegram_sessions
     WHERE telegram_user_id = ${String(userID)}
     LIMIT 1
   `
-  const result = typeof existing[0]?.session_id === "string" ? existing[0].session_id : sessionID
-  volatileSessions.set(userID, result)
-  return result
+  const result = existing[0]?.session_id
+  if (typeof result === "string" && result === sessionID) return result
+  throw new Error("Neon did not confirm the Telegram session mapping; refusing to report it as saved.")
 }
 
 function tagsOf(input: unknown): string[] {
