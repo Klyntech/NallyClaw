@@ -16,6 +16,9 @@ test("adds durable memory guidance when memory tools are available", () => {
   expect(prompt).toContain("Save stable, useful user facts")
   expect(prompt).toContain("latest explicit correction as authoritative")
   expect(prompt).toContain("Never store passwords, API keys, access tokens")
+  expect(prompt).toContain("check the current conversation and relevant memories")
+  expect(prompt).toContain("ask one concise clarifying question")
+  expect(prompt).toContain("changing information such as scores, lineups")
 })
 
 test("does not add memory guidance when memory tools are unavailable", () => {
