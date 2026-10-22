@@ -244,7 +244,7 @@ async function ownerForSession(sessionID: string) {
   if (personalOwner) return personalOwner
 
   await ensureSchema()
-  const rows = await sql`
+  const rows = await sql()`
     SELECT telegram_user_id
     FROM nally_telegram_sessions
     WHERE session_id = ${sessionID}
@@ -257,7 +257,7 @@ async function ownerForSession(sessionID: string) {
 export async function getTelegramSession(userID: number): Promise<string | undefined> {
   // Session mappings must be durable too: never "restore" a session from process memory.
   await ensureSchema()
-  const rows = await sql`
+  const rows = await sql()`
     SELECT session_id FROM nally_telegram_sessions
     WHERE telegram_user_id = ${String(userID)}
     LIMIT 1
@@ -269,7 +269,7 @@ export async function getTelegramSession(userID: number): Promise<string | undef
 export async function saveTelegramSession(userID: number, sessionID: string): Promise<string> {
   // Do not return success until Neon confirms the mapping was persisted.
   await ensureSchema()
-  const inserted = await sql`
+  const inserted = await sql()`
     INSERT INTO nally_telegram_sessions (telegram_user_id, session_id)
     VALUES (${String(userID)}, ${sessionID})
     ON CONFLICT (telegram_user_id) DO UPDATE SET session_id = EXCLUDED.session_id, updated_at = now()
@@ -281,7 +281,7 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
     // sessions. PostgreSQL's upsert may return the row written by this request even
     // though another request has since replaced the canonical mapping. Prefer the
     // actual persisted mapping instead of failing the whole user message.
-    const current = await sql`
+    const current = await sql()`
       SELECT session_id FROM nally_telegram_sessions
       WHERE telegram_user_id = ${String(userID)}
       LIMIT 1
@@ -291,7 +291,7 @@ export async function saveTelegramSession(userID: number, sessionID: string): Pr
     return saved
   }
 
-  const existing = await sql`
+  const existing = await sql()`
     SELECT session_id FROM nally_telegram_sessions
     WHERE telegram_user_id = ${String(userID)}
     LIMIT 1
@@ -602,7 +602,7 @@ export async function updateMemory(input: {
 export async function forgetMemory(sessionID: string, memoryID: string) {
   await ensureSchema()
   const ownerKey = await ownerForSession(sessionID)
-  const rows = await sql`
+  const rows = await sql()`
     DELETE FROM nally_memories
     WHERE id = ${memoryID} AND owner_key = ${ownerKey}
     RETURNING id
@@ -708,7 +708,7 @@ function knowledgeItem(row: any): KnowledgeChunk {
 export async function listKnowledge(sessionID: string, limit = 10) {
   await ensureSchema()
   const ownerKey = await ownerForSession(sessionID)
-  const rows = await sql`
+  const rows = await sql()`
     SELECT d.id, d.title, d.source, d.created_at, COUNT(c.id)::int AS chunks
     FROM nally_documents d LEFT JOIN nally_document_chunks c ON c.document_id = d.id
     WHERE d.owner_key = ${ownerKey} AND d.deleted_at IS NULL
@@ -721,7 +721,7 @@ export async function listKnowledge(sessionID: string, limit = 10) {
 export async function forgetKnowledge(sessionID: string, documentID: string) {
   await ensureSchema()
   const ownerKey = await ownerForSession(sessionID)
-  const rows = await sql`
+  const rows = await sql()`
     DELETE FROM nally_documents
     WHERE id = ${documentID} AND owner_key = ${ownerKey}
     RETURNING id
