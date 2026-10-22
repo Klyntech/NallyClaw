@@ -18,7 +18,8 @@ The Render entry point is `packages/nally-telegram/src/server.ts`. The public po
 
 - `TELEGRAM_BOT_TOKEN`: BotFather token.
 - `TELEGRAM_WEBHOOK_SECRET`: secret token configured on Telegram's webhook.
-- `TELEGRAM_ALLOWED_USER_IDS`: comma-separated numeric Telegram user IDs; do not leave empty.
+- `TELEGRAM_ALLOWED_USER_IDS`: comma-separated numeric Telegram user IDs; for the personal cross-platform identity, configure exactly your own Telegram user ID.
+- Optional `NALLY_PERSONAL_OWNER_ID`: stable owner key for a single-user deployment. If omitted and exactly one Telegram user ID is allowlisted, Nally automatically uses `telegram:<id>` for every session, preserving existing Telegram memories. If set, use `telegram:<your-numeric-id>` to keep existing memory ownership or a unique private label such as `personal:clinton`. Never use a shared personal owner key for a multi-user deployment.
 - `OPENCODE_SERVER_PASSWORD`: server API credential. Set as a Render secret; never commit or log it.
 - `PORT`: supplied by Render.
 - `RENDER_EXTERNAL_URL`: supplied by Render and used to register the public webhook.
