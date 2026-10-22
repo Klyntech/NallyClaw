@@ -31,5 +31,8 @@ jobs:
       - name: Test memory retrieval and conversation recovery
         run: bun --config .github/bunfig-ci.toml test packages/core/test/nally-memory-retrieval.test.ts
 
+      - name: Test personal memory and reference-resolution instructions
+        run: bun --config .github/bunfig-ci.toml test packages/core/test/session-system-prompt.test.ts
+
       - name: Test Telegram webhook and response handling
         run: bun --config .github/bunfig-ci.toml test packages/nally-telegram/src
