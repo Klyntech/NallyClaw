@@ -219,6 +219,89 @@ describe("waitForAssistantMessage", () => {
     ).rejects.toThrow("no progress for too long")
   })
 
+  test("retries transient message-list errors instead of failing the whole turn", async () => {
+    let calls = 0
+    let clock = 0
+    const pollErrors: number[] = []
+    const result = await waitForAssistantMessage(
+      async () => {
+        calls++
+        if (calls === 1) throw new Error("temporary local API timeout")
+        return {
+          data: [
+            {
+              id: "msg-assistant-final",
+              type: "assistant",
+              finish: "stop",
+              time: { completed: "2026-10-22T19:00:02.000Z" },
+              content: [{ type: "text", text: "Recovered" }],
+            },
+            { id: "msg-user", type: "user" },
+          ],
+        }
+      },
+      "msg-user",
+      {
+        timeoutMs: 1_000,
+        pollIntervalMs: 100,
+        now: () => clock,
+        sleep: async (ms) => { clock += ms },
+        onPollError: (_error, count) => { pollErrors.push(count) },
+      },
+    )
+    expect(result.messages[0]?.id).toBe("msg-assistant-final")
+    expect(calls).toBe(2)
+    expect(pollErrors).toEqual([1])
+  })
+
+  test("returns a failed terminal execution instead of waiting until timeout", async () => {
+    const result = await waitForAssistantMessage(
+      async () => ({
+        data: [
+          { id: "msg-idle", type: "idle", outcome: "failed" },
+          { id: "msg-user", type: "user" },
+        ],
+      }),
+      "msg-user",
+      { timeoutMs: 1_000, pollIntervalMs: 100 },
+    )
+    expect(result.terminalOutcome).toBe("failed")
+  })
+
+  test("reports when the admitted user message is not yet projected into history", async () => {
+    let calls = 0
+    let clock = 0
+    const pending: number[] = []
+    const result = await waitForAssistantMessage(
+      async () => {
+        calls++
+        if (calls < 4) return { data: [] }
+        return {
+          data: [
+            {
+              id: "msg-assistant",
+              type: "assistant",
+              finish: "stop",
+              time: { completed: "2026-10-22T19:00:02.000Z" },
+              content: [{ type: "text", text: "Ready" }],
+            },
+            { id: "msg-user", type: "user" },
+          ],
+        }
+      },
+      "msg-user",
+      {
+        timeoutMs: 1_000,
+        pollIntervalMs: 100,
+        now: () => clock,
+        sleep: async (ms) => { clock += ms },
+        onUserMessagePending: (elapsedMs) => { pending.push(elapsedMs) },
+      },
+    )
+    expect(result.messages[0]?.id).toBe("msg-assistant")
+    expect(pending).toHaveLength(1)
+  })
+
   test("maps common tools to user-readable status labels", () => {
     expect(describeToolProgress("websearch")).toBe("🔎 Searching the web…")
     expect(describeToolProgress("read")).toBe("📄 Reading file…")
