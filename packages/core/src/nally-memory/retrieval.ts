@@ -65,12 +65,15 @@ export function buildConversationContext(
   currentText: string,
 ): string {
   const seen = new Set<string>()
-  const merged = [...relevant, ...recent].filter((turn) => {
-    const key = `${turn.user_text}\u0000${turn.assistant_text}`
+  // Reserve slots for retrieved older exchanges before appending recent context.
+  // Slicing the combined list from the end lets recent turns crowd out every
+  // relevant result, defeating retrieval exactly when the runtime session is lost.
+  const merged = [...relevant.slice(0, 4), ...recent.slice(-8)].filter((turn) => {
+    const key = `${turn.user_text}\\u0000${turn.assistant_text}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
-  }).slice(-10)
+  }).slice(0, 10)
   if (!merged.length) return currentText
   const history = merged.map((turn, index) =>
     `Turn ${index + 1}:\nUser: ${turn.user_text.slice(0, 1800)}\nNally: ${turn.assistant_text.slice(0, 2200)}`,
