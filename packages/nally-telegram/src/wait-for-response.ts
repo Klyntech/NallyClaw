@@ -24,8 +24,8 @@ export type CompletedAssistantMessages = {
 export const DEFAULT_ASSISTANT_TIMEOUT_MS = 90_000
 /** Shorter wait for live voice calls — fail before the user stares at silence. */
 export const VOICE_ASSISTANT_TIMEOUT_MS = 60_000
-/** If progress status does not change for this long, treat the turn as stuck. */
-export const DEFAULT_STAGNATION_MS = 45_000
+/** Allow slow model/tool turns to progress without failing on a generic status label. */
+export const DEFAULT_STAGNATION_MS = 90_000
 
 function humanizeToolName(value: string) {
   const leaf = value.split(/[.:/]/).filter(Boolean).pop() ?? value
@@ -60,7 +60,31 @@ function activeToolProgress(message: MessageLike | undefined): string {
     const name = String(part.tool ?? part.name ?? part.state?.title ?? "")
     if (name) return describeToolProgress(name)
   }
+  if (parts.some((part) => part?.type === "text" && typeof part.text === "string" && part.text.length > 0)) {
+    return "✍️ Drafting response…"
+  }
   return "🤔 Thinking…"
+}
+
+// Detect underlying message changes even when the human-readable label remains
+// the same (for example, streamed text growing while the label is "Thinking…").
+// Only metadata and text lengths are used; message text is never logged.
+function assistantProgressFingerprint(message: MessageLike | undefined): string {
+  if (!message) return "no-assistant"
+  const parts = Array.isArray(message.content) ? message.content : Array.isArray(message.parts) ? message.parts : []
+  return JSON.stringify({
+    id: message.id ?? "",
+    finish: message.finish ?? "",
+    completed: message.time?.completed ?? "",
+    error: message.error ? String(message.error.name ?? message.error.type ?? "present") : "",
+    parts: parts.map((part) => ({
+      type: part?.type ?? "",
+      tool: part?.tool ?? part?.name ?? "",
+      status: part?.state?.status ?? "",
+      title: part?.state?.title ?? "",
+      textLength: typeof part?.text === "string" ? part.text.length : 0,
+    })),
+  })
 }
 
 function isToolCallIteration(message: MessageLike | undefined) {
@@ -112,6 +136,7 @@ export async function waitForAssistantMessage(
   const deadline = startedAt + timeoutMs
   let lastProgress = ""
   let lastProgressAt = startedAt
+  let lastFingerprint = ""
 
   while (true) {
     const result = await getMessages()
@@ -130,11 +155,17 @@ export async function waitForAssistantMessage(
       }
 
       const progress = activeToolProgress(assistant)
+      const fingerprint = assistantProgressFingerprint(assistant)
+      const currentTime = now()
+      if (fingerprint !== lastFingerprint) {
+        lastFingerprint = fingerprint
+        lastProgressAt = currentTime
+      }
       if (progress !== lastProgress) {
         lastProgress = progress
-        lastProgressAt = now()
         await options.onProgress?.(progress)
-      } else if (now() - lastProgressAt >= stagnationMs) {
+      }
+      if (currentTime - lastProgressAt >= stagnationMs) {
         throw new AssistantWaitTimeoutError({
           lastProgress,
           elapsedMs: now() - startedAt,
