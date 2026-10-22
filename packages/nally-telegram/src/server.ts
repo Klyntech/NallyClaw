@@ -241,7 +241,7 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
         .trim()
       // Tool-call iterations can contain user-facing commentary, but are not the final answer.
       if (text && !candidate.error && String(candidate.finish ?? "").toLowerCase() !== "tool-calls") {
-        log(`message completed in ${Date.now() - startedAt}ms`)
+        log(`message completed updateID=${message.updateID} session=${sessionID} in ${Date.now() - startedAt}ms`)
         return text
       }
 
@@ -267,7 +267,7 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
     return "I couldn't get a text response from the model. Please try again; if this keeps happening, the model/provider configuration needs checking."
   } catch (error) {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    log(`message failed at stage "${stage}" after ${Date.now() - startedAt}ms`, detail)
+    log(`message failed updateID=${message.updateID} at stage "${stage}" after ${Date.now() - startedAt}ms`, detail)
 
     if (sessionID && userMessageID && (error instanceof AssistantWaitTimeoutError || error instanceof AssistantPollingError)) {
       let userMessageVisible = "unknown"
@@ -302,7 +302,7 @@ async function onMessage(message: TelegramTextMessage, reportProgress: TelegramP
 
       // A timeout alone does not stop the runtime. Interrupt only after a confirmed
       // hard wait timeout and only when the runtime reports this session as active.
-      if (error instanceof AssistantWaitTimeoutError && active === true) {
+      if (error instanceof AssistantWaitTimeoutError && userMessageVisible === "yes" && active === true) {
         try {
           const result = await interruptActiveSession(sessionID)
           log(`timeout recovery requested session interruption (updateID=${message.updateID}; accepted=${result?.interrupted === true})`)
