@@ -190,6 +190,15 @@ async function optionalEmbedding(text: string, mode: EmbeddingMode) {
 }
 
 function configuredPersonalOwnerKey() {
+  const allowedUserIDs = (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isSafeInteger(value) && value > 0)
+
+  // Never let a single-user owner override merge multiple allowlisted Telegram
+  // accounts into one memory namespace.
+  if (allowedUserIDs.length > 1) return undefined
+
   const configured = process.env.NALLY_PERSONAL_OWNER_ID?.trim()
   if (configured) {
     return configured.startsWith("telegram:") || configured.startsWith("personal:")
@@ -199,10 +208,6 @@ function configuredPersonalOwnerKey() {
 
   // A single allowlisted Telegram identity is the canonical owner for this
   // personal deployment. This preserves existing telegram:<id> memory rows.
-  const allowedUserIDs = (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "")
-    .split(",")
-    .map((value) => Number(value.trim()))
-    .filter((value) => Number.isSafeInteger(value) && value > 0)
   return allowedUserIDs.length === 1 ? `telegram:${allowedUserIDs[0]}` : undefined
 }
 
