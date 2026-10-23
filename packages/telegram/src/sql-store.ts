@@ -54,14 +54,12 @@ export class SqlTelegramStore {
   }
 
   async complete(updateId: number): Promise<void> {
-    const result = await this.sql.query(
+    await this.sql.query(
       `UPDATE telegram_updates
        SET status = 'completed', updated_at = NOW(), error = NULL
        WHERE update_id = $1 AND status = 'processing'`,
       [String(updateId)],
     )
-    // Drivers vary in row-count reporting; a subsequent lookup is portable.
-    if ("rowCount" in result && typeof (result as { rowCount?: unknown }).rowCount === "number" && (result as { rowCount: number }).rowCount > 0) return
     const state = await this.sql.query<{ status: string }>(
       "SELECT status FROM telegram_updates WHERE update_id = $1",
       [String(updateId)],
