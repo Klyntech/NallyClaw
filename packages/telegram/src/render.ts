@@ -14,15 +14,18 @@ function textFromPart(value: unknown): string {
   if (typeof value === "string") return value
   if (!isRecord(value)) return ""
   if (value.type === "text" && typeof value.text === "string") return value.text
+  // Do not forward reasoning, tool calls, or other non-text content to Telegram.
+  if (typeof value.type === "string") return ""
   if (typeof value.text === "string") return value.text
   return ""
 }
 
-/** Convert common OpenCode message/content shapes into plain text without trusting markup. */
+/** Convert projected OpenCode messages to plain text, excluding reasoning and tool content. */
 export function renderPlainText(value: unknown): string {
   if (typeof value === "string") return value.trim()
   if (!isRecord(value)) return ""
 
+  if (value.type === "reasoning" || value.type === "tool") return ""
   const direct = typeof value.text === "string" ? value.text : undefined
   if (direct !== undefined) return direct.trim()
 
