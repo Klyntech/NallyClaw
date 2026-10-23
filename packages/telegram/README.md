@@ -7,6 +7,7 @@ This workspace package is the Telegram boundary for the existing NallyClaw/OpenC
 - `src/security.ts` validates Telegram's webhook secret and parses ordinary text updates.
 - `src/render.ts` extracts plain text from common message shapes and chunks output below Telegram's message limit.
 - `src/client.ts` provides a minimal Telegram Bot API client without exposing the bot token in error messages.
+- `src/opencode.ts` provides a thin client for the existing session/create, session/prompt, message-list, and interrupt routes. Prompt execution stays in the existing agent process and uses its configured tool registry.
 - `src/webhook.ts` provides an injectable Request handler with sender allowlisting and a durable-update-store contract.
 - `test/` contains unit tests for validation, rendering/chunking, and webhook flow.
 
