@@ -152,10 +152,14 @@ export async function runTelegramWorker(options: TelegramWorkerOptions): Promise
       const status = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
         ? error.status
         : undefined
+      const endpoint = typeof error === "object" && error !== null && "endpoint" in error && typeof error.endpoint === "string"
+        ? error.endpoint
+        : undefined
       console.error("[nally-telegram] queued message processing failed", {
         updateId: message.updateId,
         errorType,
         ...(status === undefined ? {} : { status }),
+        ...(endpoint === undefined ? {} : { endpoint }),
       })
       try {
         await options.queue.release(message.updateId, "processing_failed")
