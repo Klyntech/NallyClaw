@@ -924,7 +924,7 @@ async function retrieveStandingMemories(db: Sql, ownerKey: string, limit = 3) {
     FROM nally_memories
     WHERE owner_key = ${ownerKey}
       AND forgotten_at IS NULL
-      AND importance >= 4
+      AND importance >= 3
       AND category IN ('preference', 'fact')
     ORDER BY importance DESC, updated_at DESC
     LIMIT ${clampLimit(limit, 3)}
