@@ -1,24 +1,16 @@
 # NallyClaw Telegram Adapter
 
-This package is the planned Telegram edge adapter for NallyClaw. It is intentionally a small workspace package and does not create a second server process or reimplement the agent runtime.
+This workspace package reserves the integration boundary for the planned Telegram adapter. It must be mounted into the existing server process and reuse NallyClaw's agent runtime rather than creating a second server or reimplementing the agent.
 
 ## Current scaffold
 
-- `src/security.ts` — constant-time comparison helper and webhook-secret validation.
-- `src/render.ts` — HTML escaping and conservative message chunking primitives.
-- `test/` — unit tests for security and rendering primitives.
-- `../../docs/telegram/phase-0.md` — blocking decisions and runtime verification checklist.
+- Package/workspace metadata and TypeScript configuration.
+- Phase 0 decision and verification checklist: [`docs/telegram/phase-0.md`](../../docs/telegram/phase-0.md).
 
-## Not wired yet
+## Why feature code is not wired yet
 
-The webhook route, Effect service/layer registration, durable update deduplication, turn runner, Telegram API client, and Neon schema are intentionally not wired until Phase 0 confirms the product/workspace decisions and the actual server API contract. Do not deploy this package as a standalone service.
+The design document explicitly makes Phase 0 a gate before Phase 1 feature implementation. The repository's product identity, workspace/filesystem requirements, existing SQLite data status, upstream-sync policy, real server API mapping, and Render/Neon runtime measurements must be confirmed first. This package is not deployable and currently contains no webhook, renderer, turn runner, database driver, or Telegram API client.
 
-## Checks
+## Planned first vertical slice
 
-From the repository root:
-
-```sh
-bun test packages/telegram/test
-```
-
-The repository's root typecheck is a monorepo-wide command; use it after integrating this package into the server layer.
+After Phase 0 passes, implement and test the renderer first, then the authenticated webhook and durable update deduplication, then the turn lifecycle/streaming and health/observability surface. Memory, RAG, media, and full storage cutover belong to later phases.
