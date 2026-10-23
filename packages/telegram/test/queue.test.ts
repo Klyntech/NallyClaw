@@ -46,6 +46,23 @@ describe("createQueuedTelegramWebhook", () => {
     })
   })
 
+  test("rejects oversized webhook payloads before JSON parsing", async () => {
+    const handler = createQueuedTelegramWebhook({
+      secret: "secret",
+      allowedUserIds: new Set([200]),
+      queue: { async enqueue() { throw new Error("must not enqueue") } },
+    })
+    const response = await handler(new Request("https://example.test/webhook", {
+      method: "POST",
+      headers: {
+        "x-telegram-bot-api-secret-token": "secret",
+        "content-type": "application/json",
+      },
+      body: "x".repeat(64 * 1024 + 1),
+    }))
+    expect(response.status).toBe(413)
+  })
+
   test("returns 503 if the durable queue is unavailable", async () => {
     const handler = createQueuedTelegramWebhook({
       secret: "secret",
