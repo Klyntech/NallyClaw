@@ -74,34 +74,43 @@ export function createAgentTurnRunner(options: AgentTurnRunnerOptions) {
     const admitted = await options.client.sendPrompt(sessionId, input.text)
     const admittedId = messageId(admitted)
     if (!admittedId) throw new Error("Agent did not return an admitted message ID")
+    const admittedAt = timestamp(admitted)
 
     const deadline = now() + timeoutMs
     while (now() < deadline) {
-      const messages = await options.client.listMessages(sessionId, 100)
+      const messages = await options.client.listMessages(sessionId, 200)
       const admittedIndex = messages.findIndex((message) => messageId(message) === admittedId)
 
-      // The API defaults to newest-first. Wait until this prompt has an idle marker
-      // newer than the admitted message before assembling the response.
-      if (admittedIndex >= 0) {
-        const newer = messages.slice(0, admittedIndex)
-        const idle = newer.find((message) => messageType(message) === "idle")
-        if (idle) {
-          const outcome = idleOutcome(idle)
-          if (outcome !== "succeeded") {
-            if (outcome === "interrupted") return "The agent run was interrupted."
-            return "The agent couldn't complete that request. Please try again."
-          }
+      // Prefer timestamps so long tool-heavy runs still complete if the admitted message
+      // has fallen outside the newest page. Fall back to IDs when timestamps are absent.
+      const idle = Number.isFinite(admittedAt)
+        ? messages.find((message) => {
+            const created = timestamp(message)
+            return messageType(message) === "idle" && Number.isFinite(created) && created >= admittedAt
+          })
+        : admittedIndex >= 0
+          ? messages.slice(0, admittedIndex).find((message) => messageType(message) === "idle")
+          : undefined
 
-          const answer = newer
-            .filter((message) => messageType(message) === "assistant")
-            .reverse()
-            .map(renderPlainText)
-            .filter(Boolean)
-            .join("\n\n")
-            .trim()
+      if (idle) {
+        const idleAt = timestamp(idle)
+        const newer = Number.isFinite(admittedAt) && Number.isFinite(idleAt)
+          ? messages.filter((message) => {
+              const created = timestamp(message)
+              return messageType(message) === "assistant" && Number.isFinite(created) && created >= admittedAt && created <= idleAt
+            })
+          : admittedIndex >= 0
+            ? messages.slice(0, admittedIndex).filter((message) => messageType(message) === "assistant")
+            : []
 
-          return answer || "The agent finished, but returned no text response."
+        const outcome = idleOutcome(idle)
+        if (outcome !== "succeeded") {
+          if (outcome === "interrupted") return "The agent run was interrupted."
+          return "The agent couldn't complete that request. Please try again."
         }
+
+        const answer = newer.reverse().map(renderPlainText).filter(Boolean).join("\n\n").trim()
+        return answer || "The agent finished, but returned no text response."
       }
 
       await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - now())))
