@@ -8,7 +8,7 @@ This workspace package is the Telegram boundary for the existing NallyClaw/OpenC
 - `src/render.ts` extracts plain text from common message shapes and chunks output below Telegram's message limit.
 - `src/client.ts` provides a minimal Telegram Bot API client without exposing the bot token in error messages.
 - `src/opencode.ts` provides a thin client for the existing session/create, session/prompt, message-list, and interrupt routes. Prompt execution stays in the existing agent process and uses its configured tool registry.
-- `src/turn.ts` connects a Telegram chat to a saved agent session, submits a prompt, polls until the session emits an idle marker, and returns assistant text rather than echoing the admitted user message.
+- `src/turn.ts` connects a Telegram chat to a saved agent session, submits a prompt with a deterministic Telegram-update-derived message ID, polls until the session emits an idle marker, and returns assistant text rather than echoing the admitted user message. Retries look up that prompt before resubmitting it to reduce duplicate tool execution.
 - `src/sql-store.ts` implements durable update claims and chat-to-session mapping through an injected SQL executor. `migrations/001_telegram.sql` defines the PostgreSQL tables.
 - `src/bot.ts` composes the webhook, SQL store, Telegram client, and existing agent API client into one handler.
 - The turn runner serializes messages per chat within a single process; multi-instance deployments still require a database-backed per-chat lock.
@@ -30,7 +30,7 @@ These files are the first implementation slice; they are **not yet wired into th
 
 1. Wire `SqlTelegramStore` to a real PostgreSQL executor and apply the migration; test concurrent claims and stale lease recovery against PostgreSQL.
 2. Mount `handleWebhook` in the existing server and start `runWorker` as a managed background task; confirm graceful shutdown and recovery behavior.
-3. Add cross-instance per-chat locking and protect against duplicate agent-side effects after worker crashes.
+3. Add cross-instance per-chat locking and protect against duplicate agent-side effects after worker crashes. Deterministic prompt IDs prevent many duplicate admissions, but Telegram reply delivery itself is not exactly-once.
 3. Mount the webhook into the existing server with secret validation and a private/authenticated boundary.
 4. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
 
