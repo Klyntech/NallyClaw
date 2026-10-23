@@ -18,6 +18,23 @@ The existing repository is a Bun/TypeScript AI coding-agent monorepo, not a gene
   
 Decisions were recorded from the project owner's instruction on 2026-10-23. Revisit only if the owner changes them or verification reveals a material contradiction.
 
+
+## Initial adapter route map (verified in protocol source)
+
+Source files: `packages/protocol/src/groups/session.ts`, `packages/protocol/src/groups/message.ts`, and `packages/protocol/src/groups/event.ts`. This table records route candidates, not proof that the end-to-end headless spike has passed.
+
+| Telegram adapter operation | Existing server route | Intended use | Status |
+|---|---|---|---|
+| List sessions | `GET /api/session` (`session.list`) | Find/select a conversation session | Candidate; contract test pending |
+| Create session | `POST /api/session` (`session.create`) | Start a new conversation session | Candidate; contract test pending |
+| Read message history | `GET /api/session/:sessionID/message` (`session.messages`) | Render existing session messages | Candidate; `session_message.data` projection still needs to be frozen |
+| Send a user turn | `POST /api/session/:sessionID/prompt` (`session.prompt`) | Submit Telegram text to the existing agent | Candidate; payload/response and lifecycle need an integration spike |
+| Interrupt a turn | `POST /api/session/:sessionID/interrupt` (`session.interrupt`) | Stop a running turn if supported by Telegram UX | Optional candidate |
+| Observe server events | `GET /api/event` (`event.subscribe`, SSE) | Receive progress and completion events | Candidate; stream reconnect/loss semantics must be handled because the route is documented as volatile |
+| Webhook ingress | Not part of the existing agent routes | Telegram update authentication, validation, and dispatch | New adapter route; design/implementation deferred until Phase 0 passes |
+
+Do not call these routes directly from a public webhook without an explicit server-authentication and network-boundary design. The Telegram adapter must preserve the existing server's authorization model and must not expose the agent server to the public internet by accident.
+
 ## Phase 0 verification checklist
 
 These are still pending; no runtime measurement or integration test is claimed as complete.
@@ -27,7 +44,7 @@ These are still pending; no runtime measurement or integration test is claimed a
 - [ ] Deploy a trivial Bun service to Render Free; record cold-start duration, idle RSS, and RSS under one concurrent request.
 - [ ] Verify Render-to-Neon connectivity using the pooled connection string; record latency and observed connection count without logging credentials.
 - [ ] Run `opencode serve` headlessly and script one session creation plus session listing against the actual generated API.
-- [ ] Enumerate the real routes in `packages/protocol/src/api` and add an adapter mapping table before implementing Telegram handlers.
+- [x] Inspect the real session/message/event route definitions and record the initial adapter mapping table below. Full API-contract spike and request/response validation remain pending.
 - [ ] Freeze the `session_message.data` JSON shape that the renderer will consume.
 - [ ] Confirm the pinned Bun version and compatible Effect SQL/Postgres driver versions.
 - [ ] Record measurements and a go/no-go decision before Phase 1.
