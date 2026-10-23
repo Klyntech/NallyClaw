@@ -1,9 +1,9 @@
 # NallyClaw Telegram Adapter — Phase 0 Gate
 
-**Status:** In progress — owner decisions partly recorded; workspace decision and runtime measurements remain pending.  
+**Status:** Phase 0 verification remains incomplete. Per the owner's explicit instruction, Phase 1 foundation work has started in parallel; this does not mean the runtime gates have passed.  
 **Design source:** `DESIGN.pdf`, version 0.1 (2026-10-23).  
 **Implementation branch:** `nallyclaw-scaffolding`  
-**Rule:** Do not start Phase 1 feature code until all blocking decisions are recorded and the runtime verification checklist has a go/no-go result.
+**Sequencing note:** The original plan gated Phase 1 on runtime verification. The owner later explicitly instructed us to start implementation before those checks were complete. Continue implementation, but do not claim production readiness or deploy until the remaining architecture and runtime gates pass.
 
 ## Why Phase 0 comes first
 
@@ -42,7 +42,7 @@ These are still pending; no runtime measurement or integration test is claimed a
 - [x] Record the confirmed A1/A3/A5 owner decisions above.
 - [x] Record A2 — all existing tools, including filesystem/workspace tools, must be available in Phase 1.
 - [ ] Design and verify durable workspace provisioning, per-user/session isolation, filesystem permissions, and safe tool execution; confirm this works with the chosen hosting target.
-- [ ] Deploy a trivial Bun service to Render Free; record cold-start duration, idle RSS, and RSS under one concurrent request.
+- [ ] Deploy a trivial Bun service to Render Free; record cold-start duration, idle RSS, and RSS under one concurrent request. Phase 1 coding has begun by owner instruction; this measurement remains a deployment gate.
 - [ ] Verify Render-to-Neon connectivity using the pooled connection string; record latency and observed connection count without logging credentials.
 - [ ] Run `opencode serve` headlessly and script one session creation plus session listing against the actual generated API.
 - [x] Inspect the real session/message/event route definitions and record the initial adapter mapping table below. Full API-contract spike and request/response validation remain pending.
@@ -54,13 +54,13 @@ These are still pending; no runtime measurement or integration test is claimed a
 
 Phase 0 is complete only when the all-tools scope is recorded, the workspace architecture is defined and verified, the headless API spike works, Render/Neon connectivity is measured, and memory/cold-start measurements support the proposed hosting target. If the workspace cannot be made durable and isolated, Bun exceeds the 512 MB budget, or Neon latency makes a turn unacceptable, stop and re-plan hosting before adding bot feature code.
 
-## Phase 1 implementation order (not started)
+## Phase 1 implementation order (foundation started; integration incomplete)
 
-1. Define and implement the workspace/tool execution boundary so all existing agent tools are available with durable workspace access, per-session/user isolation, and least-privilege permissions.
-2. Add a `packages/telegram` adapter following the repository's Effect service/layer and HTTP API conventions.
-3. Implement and test the pure renderer: normalization, safe Markdown subset conversion, HTML escaping/validation, and Telegram-safe chunking with plain-text fallback.
-4. Add webhook secret validation and database-backed update deduplication.
-5. Add durable turn lifecycle, resumable processing, and a boot-time sweeper.
-6. Add edit-in-place streaming with rate limiting and `/healthz` plus structured correlation logs.
+1. **In progress:** establish the workspace/tool execution boundary so all existing agent tools are available with durable workspace access, per-session/user isolation, and least-privilege permissions.
+2. **Foundation committed:** add the `packages/telegram` adapter modules for webhook validation/dispatch, plain-text rendering/chunking, and Telegram Bot API calls.
+3. **Pending:** integrate the adapter into the existing server using repository conventions and the real headless agent session API.
+4. **Pending:** implement durable update deduplication and durable chat-to-session mapping.
+5. **Pending:** add durable turn lifecycle, resumable processing, and a boot-time sweeper.
+6. **Pending:** add edit-in-place streaming with rate limiting and `/healthz` plus structured correlation logs.
 
 Memory, RAG, media, and the full Postgres storage cutover are later phases and are intentionally not part of the first vertical slice.
