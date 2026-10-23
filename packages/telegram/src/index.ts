@@ -10,3 +10,4 @@ export {
   type UpdateClaim,
 } from "./webhook.js"
 export { createAgentTurnRunner, type AgentTurnRunnerOptions, type TelegramSessionMap } from "./turn.js"
+export { SqlTelegramStore, type SqlResult, type SqlTelegramStoreOptions, type TelegramSqlExecutor } from "./sql-store.js"
