@@ -2,7 +2,7 @@ import { TelegramClient } from "./client.js"
 import type { OpenCodeClient } from "./opencode.js"
 import type { SqlTelegramStore } from "./sql-store.js"
 import { createAgentTurnRunner } from "./turn.js"
-import { createTelegramWebhook } from "./webhook.js"
+import { createQueuedTelegramWebhook, runTelegramWorker } from "./queue.js"
 
 export type TelegramBotOptions = {
   secret: string | undefined
@@ -12,12 +12,13 @@ export type TelegramBotOptions = {
   agent: OpenCodeClient
   pollIntervalMs?: number
   timeoutMs?: number
+  queuePollIntervalMs?: number
 }
 
 /**
- * Compose the Telegram webhook with the durable SQL store and existing agent API.
- * The host application still owns HTTP route registration, SQL-driver creation,
- * migration execution, and server authentication/network policy.
+ * Compose a prompt-queueing webhook and a separate durable worker.
+ * The host must register handleWebhook as an HTTP route and start runWorker during
+ * server startup. The webhook acknowledges only after the update has been stored.
  */
 export function createTelegramBot(options: TelegramBotOptions) {
   const runTurn = createAgentTurnRunner({
@@ -27,11 +28,21 @@ export function createTelegramBot(options: TelegramBotOptions) {
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   })
 
-  return createTelegramWebhook({
+  const handleWebhook = createQueuedTelegramWebhook({
     secret: options.secret,
     allowedUserIds: options.allowedUserIds,
-    updates: options.store,
-    runTurn,
-    sendMessage: (chatId, text) => options.telegram.sendMessage({ chat_id: chatId, text }),
+    queue: options.store,
   })
+
+  return {
+    handleWebhook,
+    runWorker: (signal?: AbortSignal) =>
+      runTelegramWorker({
+        queue: options.store,
+        runTurn,
+        sendMessage: (chatId, text) => options.telegram.sendMessage({ chat_id: chatId, text }),
+        ...(options.queuePollIntervalMs === undefined ? {} : { pollIntervalMs: options.queuePollIntervalMs }),
+        ...(signal === undefined ? {} : { signal }),
+      }),
+  }
 }
