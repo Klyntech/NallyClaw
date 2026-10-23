@@ -56,9 +56,12 @@ export class SqlTelegramStore implements TelegramQueueStore {
       `WITH candidate AS (
          SELECT update_id
          FROM telegram_updates
-         WHERE status = 'queued'
-            OR (status = 'failed' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
-            OR (status = 'processing' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
+         WHERE chat_id IS NOT NULL AND user_id IS NOT NULL AND message_id IS NOT NULL AND text IS NOT NULL
+           AND (
+             status = 'queued'
+             OR (status = 'failed' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
+             OR (status = 'processing' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
+           )
          ORDER BY updated_at, update_id
          FOR UPDATE SKIP LOCKED
          LIMIT 1
