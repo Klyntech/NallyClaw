@@ -20,7 +20,7 @@ export type TelegramServerRuntime = {
 export async function createTelegramServerRuntime(options: {
   password: string
   port: number | undefined
-  env?: NodeJS.ProcessEnv
+  env?: Readonly<Record<string, string | undefined>>
 }): Promise<TelegramServerRuntime | undefined> {
   const env = options.env ?? process.env
   const telegramConfigured = [
@@ -70,7 +70,7 @@ export async function createTelegramServerRuntime(options: {
 
   const executor: TelegramSqlExecutor = {
     async query<Row>(statement: string, parameters: readonly unknown[] = []) {
-      const rows = await sql.unsafe(statement, [...parameters])
+      const rows = await sql.unsafe(statement, [...parameters] as Parameters<typeof sql.unsafe>[1])
       return { rows: rows as unknown as Row[] }
     },
   }
