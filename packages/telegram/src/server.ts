@@ -56,7 +56,7 @@ export async function createTelegramServerRuntime(options: {
     throw new Error("TELEGRAM_WEBHOOK_PATH must be an absolute URL path without query or fragment")
   }
 
-  const sql = new SQL(databaseUrl)
+  const sql = new SQL(databaseUrl, { prepare: false, max: 3 })
   try {
     await sql.unsafe("SELECT 1")
     const migration = await readFile(new URL("../migrations/001_telegram.sql", import.meta.url), "utf8")
