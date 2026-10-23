@@ -24,6 +24,7 @@ export class OpenCodeApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly endpoint: string,
   ) {
     super(message)
     this.name = "OpenCodeApiError"
@@ -113,8 +114,13 @@ export class OpenCodeClient {
     })
 
     if (!response.ok) {
-      // Do not include request URLs or arbitrary response bodies in errors.
-      throw new OpenCodeApiError(`OpenCode API request failed (HTTP ${response.status})`, response.status)
+      // Report a normalized route only; never include session IDs, message IDs, URLs, or response bodies.
+      const route = path.split("?")[0]
+        .replace(/\/api\/session\/[^/]+\/message\/[^/]+/u, "/api/session/:sessionId/message/:messageId")
+        .replace(/\/api\/session\/[^/]+\/prompt/u, "/api/session/:sessionId/prompt")
+        .replace(/\/api\/session\/[^/]+\/message/u, "/api/session/:sessionId/message")
+        .replace(/\/api\/session\/[^/]+\/interrupt/u, "/api/session/:sessionId/interrupt")
+      throw new OpenCodeApiError(`OpenCode API request failed (HTTP ${response.status})`, response.status, `${init.method ?? "GET"} ${route}`)
     }
 
     if (response.status === 204) return undefined as T
