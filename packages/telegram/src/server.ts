@@ -50,6 +50,11 @@ export async function createTelegramServerRuntime(options: {
     allowedUserIds.add(value)
   }
   if (allowedUserIds.size === 0) throw new Error("TELEGRAM_ALLOWED_USER_IDS cannot be empty")
+  if (allowedUserIds.size > 1) {
+    throw new Error(
+      "Only one Telegram user may be allowlisted until per-user workspace isolation is implemented",
+    )
+  }
 
   const path = env.TELEGRAM_WEBHOOK_PATH?.trim() || "/api/telegram/webhook"
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
