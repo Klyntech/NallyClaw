@@ -46,6 +46,13 @@ export class SqlTelegramStore implements TelegramQueueStore {
   }
 
   async claimNext(): Promise<QueuedTelegramMessage | undefined> {
+    await this.sql.query(
+      `UPDATE telegram_updates
+       SET status = 'failed', updated_at = NOW(), error = 'max_attempts_exceeded'
+       WHERE status = 'processing' AND attempts >= 5
+         AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond')`,
+      [this.leaseMs],
+    )
     const result = await this.sql.query<{
       update_id: string | number
       chat_id: string | number | null
