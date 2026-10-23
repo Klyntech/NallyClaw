@@ -57,10 +57,11 @@ Phase 0 is complete only when the all-tools scope is recorded, the workspace arc
 ## Phase 1 implementation order (foundation started; integration incomplete)
 
 1. **In progress:** establish the workspace/tool execution boundary so all existing agent tools are available with durable workspace access, per-session/user isolation, and least-privilege permissions.
-2. **Foundation committed:** add the `packages/telegram` adapter modules for webhook validation/dispatch, plain-text rendering/chunking, Telegram Bot API calls, and a thin client for the existing agent session routes.
-3. **Pending:** integrate the adapter into the existing server using repository conventions and the real headless agent session API.
-4. **Pending:** implement durable update deduplication and durable chat-to-session mapping.
-5. **Pending:** add durable turn lifecycle, resumable processing, and a boot-time sweeper.
-6. **Pending:** add edit-in-place streaming with rate limiting and `/healthz` plus structured correlation logs.
+2. **Foundation committed:** add `packages/telegram` modules for webhook validation/dispatch, plain-text rendering/chunking, Telegram Bot API calls, a thin client for existing agent session routes, and a polling turn runner that waits for the agent's idle marker. Durable stores and host/server wiring remain incomplete.
+3. **Foundation committed:** implement a turn runner using the existing session/prompt/messages API; it polls until the session emits an idle marker and extracts assistant text.
+4. **Pending:** integrate the adapter into the existing server using repository conventions and the real headless agent session API.
+5. **Pending:** implement durable update deduplication and durable chat-to-session mapping.
+6. **Pending:** add durable turn lifecycle, resumable processing, and a boot-time sweeper.
+7. **Pending:** add edit-in-place streaming with rate limiting and `/healthz` plus structured correlation logs.
 
 Memory, RAG, media, and the full Postgres storage cutover are later phases and are intentionally not part of the first vertical slice.
