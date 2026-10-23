@@ -23,7 +23,7 @@ describe("OpenCodeClient", () => {
     })
 
     const session = await client.createSession("Telegram chat")
-    const admitted = await client.sendPrompt(session.id, "hello")
+    const admitted = await client.sendPrompt(session.id, "hello", "msg_tg_42")
 
     expect(session.id).toBe("ses_123")
     expect(admitted.id).toBe("msg_123")
@@ -32,7 +32,7 @@ describe("OpenCodeClient", () => {
     expect(requestHeaders.get("authorization")).toBe("Basic test")
     expect(requestHeaders.get("accept")).toBe("application/json")
     expect(requestHeaders.get("content-type")).toBe("application/json")
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ text: "hello" })
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ text: "hello", id: "msg_tg_42" })
   })
 
   test("does not include response bodies or URLs in HTTP errors", async () => {
