@@ -1,4 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/big-pickle"
+  "model": "opencode/big-pickle",
+  "provider": {
+    "opencode": {
+      "options": {
+        "baseURL": "https://opencode.ai/zen/v1"
+      }
+    }
+  }
 }
