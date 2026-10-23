@@ -28,11 +28,10 @@ describe("OpenCodeClient", () => {
     expect(session.id).toBe("ses_123")
     expect(admitted.id).toBe("msg_123")
     expect(calls[0].url).toBe("http://127.0.0.1:4096/api/session")
-    expect(calls[1].init?.headers).toMatchObject({
-      authorization: "Basic test",
-      accept: "application/json",
-      "content-type": "application/json",
-    })
+    const requestHeaders = new Headers(calls[1].init?.headers)
+    expect(requestHeaders.get("authorization")).toBe("Basic test")
+    expect(requestHeaders.get("accept")).toBe("application/json")
+    expect(requestHeaders.get("content-type")).toBe("application/json")
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({ text: "hello" })
   })
 
