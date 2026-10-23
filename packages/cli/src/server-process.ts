@@ -9,7 +9,7 @@ import { AppProcess } from "@opencode/util/process"
 import { randomBytes, randomUUID } from "node:crypto"
 import { Effect, Option, Redacted, Schema } from "effect"
 import { PersistentPty } from "@opencode/schema/persistent-pty"
-import { HttpServer } from "effect/http"
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { NetAddress } from "effect/net"
 import { Env } from "./env"
 import { ServiceConfig } from "./services/service-config"
@@ -17,6 +17,7 @@ import { RetainedImage } from "./services/retained-image"
 import { ServiceRegistration } from "./services/service-registration"
 import { RemoteTunnel } from "./services/remote-tunnel"
 import { WebUi } from "./services/web-ui"
+import { createTelegramServerRuntime } from "@opencode/telegram/server"
 import { databasePath } from "./database-path"
 
 export type Mode = "default" | "service" | "stdio"
@@ -94,8 +95,47 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             ? Redacted.value(environmentPassword)
             : randomBytes(32).toString("base64url")
       if (!password) return yield* Effect.fail(new Error("Missing server password"))
+      const telegram = yield* Effect.tryPromise({
+        try: () => createTelegramServerRuntime({ password, port }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error("Telegram runtime initialization failed")),
+      })
+      if (telegram) yield* Effect.addFinalizer(() => Effect.promise(() => telegram.close()))
+
       const instanceID = randomUUID()
-      const transform = yield* WebUi.handler()
+      const webTransform = yield* WebUi.handler()
+      const transform = (app: Parameters<typeof webTransform>[0]) => {
+        const web = webTransform(app)
+        if (!telegram) return web
+        return Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          const url = new URL(request.url, "http://localhost")
+          if (url.pathname !== telegram.path) return yield* web
+          if (request.method !== "POST") {
+            return HttpServerResponse.jsonUnsafe({ error: "method_not_allowed" }, { status: 405 })
+          }
+
+          const requestBody = yield* request.text
+          const response = yield* Effect.tryPromise({
+            try: () =>
+              telegram.handleWebhook(
+                new Request(url.toString(), {
+                  method: "POST",
+                  headers: request.headers,
+                  body: requestBody,
+                }),
+              ),
+            catch: () => new Error("Telegram webhook request failed"),
+          })
+          const responseBody = yield* Effect.tryPromise({
+            try: () => response.text(),
+            catch: () => new Error("Telegram webhook response could not be read"),
+          })
+          return HttpServerResponse.raw(responseBody, {
+            status: response.status,
+            headers: Object.fromEntries(response.headers.entries()),
+          })
+        })
+      }
       const remote = { urls: [] as ReadonlyArray<string> }
       const launch = start(
         {
@@ -185,6 +225,22 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
         }),
       )
       if (server === undefined) return
+      if (telegram) {
+        const controller = new AbortController()
+        const workerPromise = telegram.runWorker(controller.signal)
+        yield* Effect.forkScoped(
+          Effect.tryPromise({
+            try: () => workerPromise,
+            catch: (cause) => (cause instanceof Error ? cause : new Error("Telegram worker stopped")),
+          }).pipe(Effect.tapError((cause) => Effect.logError("Telegram worker stopped", { cause }))),
+        )
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(async () => {
+            controller.abort()
+            await workerPromise.catch(() => {})
+          }),
+        )
+      }
       if (serviceOptions !== undefined && config.remote !== undefined && NetAddress.isInetAddress(server.address)) {
         const bound = NetAddress.formatIp(server.address.address)
         // A wildcard bind also listens on loopback, which is all the tunnel needs to reach.
