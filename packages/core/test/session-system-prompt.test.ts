@@ -24,6 +24,17 @@ test("adds durable memory guidance when memory tools are available", () => {
   expect(prompt).toContain("changing information such as scores, lineups")
 })
 
+test("requires web search for current facts when the tool is available", () => {
+  const prompt = SessionSystemPrompt.make(["websearch"])
+  expect(prompt).toContain("call websearch before answering")
+  expect(prompt).toContain("Never claim you lack live data")
+  expect(prompt).toContain("Include the concrete calendar date")
+
+  const memoryPrompt = SessionSystemPrompt.make(["websearch", "memory_recall"])
+  expect(memoryPrompt).toContain("standing preference")
+  expect(memoryPrompt).toContain("not as certainty")
+})
+
 test("does not add memory guidance when memory tools are unavailable", () => {
   const prompt = SessionSystemPrompt.make(["read", "edit"])
   expect(prompt).not.toContain("Nally's long-term memory is shared")

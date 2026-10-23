@@ -915,18 +915,45 @@ export async function forgetKnowledge(sessionID: string, documentID: string) {
   return { forgotten: rows.length > 0, id: documentID }
 }
 
+async function retrieveStandingMemories(db: Sql, ownerKey: string, limit = 3) {
+  // Keep a tiny, high-confidence profile slice available even when the current
+  // query shares no words with a durable preference (for example, "match stats").
+  // These remain hints, not proof of the user's intended entity.
+  return await db`
+    SELECT id, category, content, tags_json, importance, created_at, updated_at
+    FROM nally_memories
+    WHERE owner_key = ${ownerKey}
+      AND forgotten_at IS NULL
+      AND importance >= 3
+      AND category IN ('preference', 'fact')
+    ORDER BY importance DESC, updated_at DESC
+    LIMIT ${clampLimit(limit, 3)}
+  `
+}
+
 export async function autoRetrieve(sessionID: string, query: string) {
-  if (!memoryDatabaseConfigured() || query.trim().length < 3) return { memories: [] as MemoryRecord[], knowledge: [] as KnowledgeChunk[] }
+  if (!memoryDatabaseConfigured() || query.trim().length < 3) {
+    return {
+      memories: [] as MemoryRecord[],
+      standingMemories: [] as MemoryRecord[],
+      knowledge: [] as KnowledgeChunk[],
+    }
+  }
   await ensureSchema()
   const db = sql()
   const ownerKey = await ownerForSession(sessionID)
   const embedding = await optionalEmbedding(query, "query")
-  const [memoryRows, knowledgeRows] = await Promise.all([
+  const [memoryRows, knowledgeRows, standingRows] = await Promise.all([
     retrieveMemories(db, ownerKey, query, 4, embedding),
     retrieveKnowledgeRows(db, ownerKey, query, 3, embedding),
+    retrieveStandingMemories(db, ownerKey, 3),
   ])
+  const memories = memoryRows.map(memoryItem)
+  const seen = new Set(memories.map((item) => item.id))
+  const standingMemories = standingRows.map(memoryItem).filter((item) => !seen.has(item.id))
   return {
-    memories: memoryRows.map(memoryItem),
+    memories,
+    standingMemories,
     knowledge: knowledgeRows.map(knowledgeItem),
   }
 }
