@@ -57,7 +57,7 @@ Phase 0 is complete only when the all-tools scope is recorded, the workspace arc
 ## Phase 1 implementation order (foundation started; integration incomplete)
 
 1. **In progress:** establish the workspace/tool execution boundary so all existing agent tools are available with durable workspace access, per-session/user isolation, and least-privilege permissions.
-2. **Foundation committed:** add the `packages/telegram` adapter modules for webhook validation/dispatch, plain-text rendering/chunking, and Telegram Bot API calls.
+2. **Foundation committed:** add the `packages/telegram` adapter modules for webhook validation/dispatch, plain-text rendering/chunking, Telegram Bot API calls, and a thin client for the existing agent session routes.
 3. **Pending:** integrate the adapter into the existing server using repository conventions and the real headless agent session API.
 4. **Pending:** implement durable update deduplication and durable chat-to-session mapping.
 5. **Pending:** add durable turn lifecycle, resumable processing, and a boot-time sweeper.
