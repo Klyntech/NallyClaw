@@ -30,14 +30,6 @@ export class OpenCodeApiError extends Error {
   }
 }
 
-type MessagePage = {
-  data: OpenCodeMessage[]
-  cursor?: {
-    previous?: string
-    next?: string
-  }
-}
-
 /**
  * Thin client for the existing agent API. Prompt execution stays inside the original
  * server, so its configured agent, tool registry, and permission rules remain in effect.
@@ -78,31 +70,18 @@ export class OpenCodeClient {
     return response.data
   }
 
-  /**
-   * The current server API does not expose GET /message/:messageID. Search its
-   * documented paginated message-list route instead, so retry recovery does not
-   * silently treat every lookup as a missing message and resubmit an old prompt.
-   */
+  /** Look up an admitted message using the server's documented single-message route. */
   async getMessage(sessionId: string, messageId: string): Promise<OpenCodeMessage | undefined> {
-    let cursor: string | undefined
-    const visited = new Set<string>()
-
-    do {
-      const query = new URLSearchParams({ limit: "200", order: "desc" })
-      if (cursor) query.set("cursor", cursor)
-      const page = await this.request<MessagePage>(
-        `/api/session/${encodeURIComponent(sessionId)}/message?${query.toString()}`,
+    try {
+      const response = await this.request<{ data: OpenCodeMessage }>(
+        `/api/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
       )
-      if (!Array.isArray(page.data)) throw new Error("OpenCode message response was invalid")
-      const found = page.data.find((message) => message.id === messageId)
-      if (found) return found
-
-      cursor = page.cursor?.next
-      if (cursor && visited.has(cursor)) throw new Error("OpenCode message pagination cursor repeated")
-      if (cursor) visited.add(cursor)
-    } while (cursor)
-
-    return undefined
+      if (!response.data) throw new Error("OpenCode message response was invalid")
+      return response.data
+    } catch (error) {
+      if (error instanceof OpenCodeApiError && error.status === 404) return undefined
+      throw error
+    }
   }
 
   async listMessages(sessionId: string, limit = 50): Promise<OpenCodeMessage[]> {
@@ -110,7 +89,7 @@ export class OpenCodeClient {
       throw new RangeError("limit must be an integer between 1 and 200")
     }
     const query = new URLSearchParams({ limit: String(limit), order: "desc" })
-    const response = await this.request<MessagePage>(
+    const response = await this.request<{ data: OpenCodeMessage[] }>(
       `/api/session/${encodeURIComponent(sessionId)}/message?${query.toString()}`,
     )
     if (!Array.isArray(response.data)) throw new Error("OpenCode message response was invalid")
