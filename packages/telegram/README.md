@@ -12,7 +12,9 @@ This workspace package is the Telegram boundary for the existing NallyClaw/OpenC
 - `src/sql-store.ts` implements durable update claims and chat-to-session mapping through an injected SQL executor. `migrations/001_telegram.sql` defines the PostgreSQL tables.
 - `src/bot.ts` composes the webhook, SQL store, Telegram client, and existing agent API client into one handler.
 - The turn runner serializes messages per chat within a single process; multi-instance deployments still require a database-backed per-chat lock.
-- `src/webhook.ts` provides an injectable Request handler with sender allowlisting and a durable-update-store contract.
+- `src/webhook.ts` provides an inline handler useful for tests and short-lived flows. Production should use `src/queue.ts`: it validates the webhook, durably enqueues updates, and responds promptly.
+- `src/queue.ts` provides a durable queue webhook and worker loop. The worker claims jobs with lease/retry support, invokes the existing agent turn runner, and sends the response.
+- `src/bot.ts` composes the queued webhook and worker. The host must mount `handleWebhook` and start `runWorker` during server startup.
 - `test/` contains unit tests for validation, rendering/chunking, webhook flow, turn polling, and the SQL-store contract.
 
 ## Important integration boundary
@@ -22,12 +24,13 @@ The webhook handler intentionally requires two host-provided dependencies:
 1. `TelegramUpdateStore` must implement atomic, durable update claims and completion/release semantics. An in-memory map is not a production substitute.
 2. `runTurn` must call the existing headless NallyClaw agent session in the correct workspace. It must preserve the existing tool registry and permission behavior rather than reimplementing or silently narrowing tools.
 
-These files are the first implementation slice; they are **not yet wired into the existing server**, and no test/typecheck run is claimed. The SQL store's behavior is covered by a fake-executor unit test; real PostgreSQL concurrency and lease-recovery behavior still need integration testing. Do not deploy the webhook until the persistent store, agent session mapping, workspace isolation, authentication/network boundary, and host route registration are implemented and verified.
+These files are the first implementation slice; they are **not yet wired into the existing server**, and no test/typecheck run is claimed. SQL and queue behavior have fake-executor/unit coverage, but real PostgreSQL concurrency, lease recovery, and worker shutdown still need integration testing. Queue processing is at-least-once: a crash after agent-side tool execution can lead to a retry, so tool effects may need idempotency protection. Do not deploy the webhook until the persistent store, agent session mapping, workspace isolation, authentication/network boundary, and host route registration are implemented and verified.
 
 ## Next steps
 
 1. Wire `SqlTelegramStore` to a real PostgreSQL executor and apply the migration; test concurrent claims and stale lease recovery against PostgreSQL.
-2. Mount the composed bot handler in the existing server and ensure the webhook responds within Telegram's delivery timeout; long-running turns need a durable worker/queue before production use.
+2. Mount `handleWebhook` in the existing server and start `runWorker` as a managed background task; confirm graceful shutdown and recovery behavior.
+3. Add cross-instance per-chat locking and protect against duplicate agent-side effects after worker crashes.
 3. Mount the webhook into the existing server with secret validation and a private/authenticated boundary.
 4. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
 
