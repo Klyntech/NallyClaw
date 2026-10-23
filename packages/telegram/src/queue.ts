@@ -1,6 +1,8 @@
 import { chunkTelegramText } from "./render.js"
 import { parseTelegramUpdate, verifyWebhookSecret } from "./security.js"
 
+export const TELEGRAM_WEBHOOK_MAX_BYTES = 64 * 1024
+
 export type QueuedTelegramMessage = {
   updateId: number
   chatId: number
@@ -24,6 +26,52 @@ export type QueuedTelegramOptions = {
   queue: Pick<TelegramQueueStore, "enqueue">
 }
 
+type BodyReadResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "invalid_json" | "too_large" }
+
+async function readJsonLimited(request: Request, maxBytes: number): Promise<BodyReadResult> {
+  const declaredLength = request.headers.get("content-length")
+  if (declaredLength !== null) {
+    const length = Number(declaredLength)
+    if (Number.isFinite(length) && length > maxBytes) return { ok: false, reason: "too_large" }
+  }
+  if (!request.body) return { ok: false, reason: "invalid_json" }
+
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        return { ok: false, reason: "too_large" }
+      }
+      chunks.push(value)
+    }
+  } catch {
+    return { ok: false, reason: "invalid_json" }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
+  } catch {
+    return { ok: false, reason: "invalid_json" }
+  }
+}
+
 /** Acknowledge Telegram promptly after durably queuing the update. */
 export function createQueuedTelegramWebhook(options: QueuedTelegramOptions) {
   return async function handleTelegramWebhook(request: Request): Promise<Response> {
@@ -32,14 +80,13 @@ export function createQueuedTelegramWebhook(options: QueuedTelegramOptions) {
       return Response.json({ error: "unauthorized" }, { status: 401 })
     }
 
-    let payload: unknown
-    try {
-      payload = await request.json()
-    } catch {
+    const parsed = await readJsonLimited(request, TELEGRAM_WEBHOOK_MAX_BYTES)
+    if (!parsed.ok) {
+      if (parsed.reason === "too_large") return Response.json({ error: "payload_too_large" }, { status: 413 })
       return Response.json({ error: "invalid_json" }, { status: 400 })
     }
 
-    const update = parseTelegramUpdate(payload)
+    const update = parseTelegramUpdate(parsed.value)
     if (!update) return Response.json({ ok: true, ignored: true })
     if (!options.allowedUserIds.has(update.message.userId)) {
       return Response.json({ ok: true, ignored: true })
