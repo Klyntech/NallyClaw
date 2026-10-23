@@ -107,6 +107,11 @@ export function createAgentTurnRunner(options: AgentTurnRunnerOptions) {
 
         const outcome = idleOutcome(idle)
         if (outcome !== "succeeded") {
+          // Log only bounded operational metadata; never log prompt or agent response text.
+          console.error("[nally-telegram] agent turn ended unsuccessfully", {
+            updateId: input.updateId,
+            outcome: outcome ?? "missing",
+          })
           if (outcome === "interrupted") return "The agent run was interrupted."
           return "The agent couldn't complete that request. Please try again."
         }
