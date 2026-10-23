@@ -1,6 +1,6 @@
 import { TelegramClient } from "./client.js"
-import { OpenCodeClient } from "./opencode.js"
-import { SqlTelegramStore } from "./sql-store.js"
+import type { OpenCodeClient } from "./opencode.js"
+import type { SqlTelegramStore } from "./sql-store.js"
 import { createAgentTurnRunner } from "./turn.js"
 import { createTelegramWebhook } from "./webhook.js"
 
