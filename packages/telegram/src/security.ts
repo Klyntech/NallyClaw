@@ -28,13 +28,17 @@ export function verifyWebhookSecret(actual: string | null, expected: string | un
   return timingSafeEqual(actualBytes, expectedBytes)
 }
 
-/** Parse only ordinary text messages. Unsupported Telegram update types are intentionally ignored. */
+/**
+ * Parse only ordinary text messages from private chats. Shared group chats would otherwise
+ * map multiple allowed users onto the same durable agent session and workspace context.
+ */
 export function parseTelegramUpdate(value: unknown): TelegramUpdate | undefined {
   if (!isRecord(value)) return
   if (!Number.isSafeInteger(value.update_id) || (value.update_id as number) < 0) return
 
   const message = isRecord(value.message) ? value.message : undefined
   if (!message || !isRecord(message.chat) || !isRecord(message.from)) return
+  if (message.chat.type !== "private") return
   if (!Number.isSafeInteger(message.message_id) || !Number.isSafeInteger(message.chat.id)) return
   if (!Number.isSafeInteger(message.from.id) || typeof message.text !== "string") return
 
