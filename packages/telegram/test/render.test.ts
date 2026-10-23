@@ -8,6 +8,20 @@ describe("renderPlainText", () => {
     expect(renderPlainText({ content: [{ type: "text", text: "answer" }] })).toBe("answer")
   })
 
+  test("does not expose reasoning or tool content", () => {
+    expect(
+      renderPlainText({
+        type: "assistant",
+        content: [
+          { type: "reasoning", text: "private reasoning" },
+          { type: "tool", name: "bash", state: { output: "private tool output" } },
+          { type: "text", text: "user-facing answer" },
+        ],
+      }),
+    ).toBe("user-facing answer")
+    expect(renderPlainText({ type: "reasoning", text: "private reasoning" })).toBe("")
+  })
+
   test("does not interpret arbitrary markup", () => {
     expect(renderPlainText({ text: "<b>not trusted html</b>" })).toBe("<b>not trusted html</b>")
     expect(renderPlainText({ parts: [{ type: "image", url: "https://example.com/image.png" }] })).toBe("")
