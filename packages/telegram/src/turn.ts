@@ -9,7 +9,7 @@ export interface TelegramSessionMap {
 }
 
 export type AgentTurnRunnerOptions = {
-  client: Pick<OpenCodeClient, "createSession" | "sendPrompt" | "listMessages">
+  client: Pick<OpenCodeClient, "createSession" | "sendPrompt" | "listMessages" | "getMessage">
   sessions: TelegramSessionMap
   pollIntervalMs?: number
   timeoutMs?: number
@@ -63,7 +63,7 @@ export function createAgentTurnRunner(options: AgentTurnRunnerOptions) {
     throw new RangeError("timeoutMs must be positive")
   }
 
-  async function executeTurn(input: { chatId: number; text: string }): Promise<string> {
+  async function executeTurn(input: { chatId: number; text: string; updateId?: number }): Promise<string> {
     let sessionId = await options.sessions.get(input.chatId)
     if (!sessionId) {
       const session = await options.client.createSession("Telegram chat")
@@ -71,7 +71,9 @@ export function createAgentTurnRunner(options: AgentTurnRunnerOptions) {
       await options.sessions.set(input.chatId, sessionId)
     }
 
-    const admitted = await options.client.sendPrompt(sessionId, input.text)
+    const promptId = input.updateId === undefined ? undefined : `msg_tg_${input.updateId}`
+    const existing = promptId === undefined ? undefined : await options.client.getMessage(sessionId, promptId)
+    const admitted = existing ?? await options.client.sendPrompt(sessionId, input.text, promptId)
     const admittedId = messageId(admitted)
     if (!admittedId) throw new Error("Agent did not return an admitted message ID")
     const admittedAt = timestamp(admitted)
@@ -122,7 +124,7 @@ export function createAgentTurnRunner(options: AgentTurnRunnerOptions) {
   // Serialize turns for a chat within this process so their idle markers and replies
   // cannot be mixed. Multi-instance deployments still need a database-backed chat lock.
   const queues = new Map<number, Promise<void>>()
-  return async function runTurn(input: { chatId: number; text: string }): Promise<string> {
+  return async function runTurn(input: { chatId: number; text: string; updateId?: number }): Promise<string> {
     const previous = queues.get(input.chatId) ?? Promise.resolve()
     let release!: () => void
     const current = new Promise<void>((resolve) => {
