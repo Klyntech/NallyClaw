@@ -25,13 +25,27 @@ The webhook handler intentionally requires two host-provided dependencies:
 1. `TelegramUpdateStore` must implement atomic, durable update claims and completion/release semantics. An in-memory map is not a production substitute.
 2. `runTurn` must call the existing headless NallyClaw agent session in the correct workspace. It must preserve the existing tool registry and permission behavior rather than reimplementing or silently narrowing tools.
 
-These files are the first implementation slice; they are **not yet wired into the existing server**, and no test/typecheck run is claimed. SQL and queue behavior have fake-executor/unit coverage, but real PostgreSQL concurrency, lease recovery, and worker shutdown still need integration testing. Queue processing is at-least-once: a crash after agent-side tool execution can lead to a retry, so tool effects may need idempotency protection. Do not deploy the webhook until the persistent store, agent session mapping, workspace isolation, authentication/network boundary, and host route registration are implemented and verified.
+The CLI server now mounts the webhook before normal API authentication and starts the worker as a managed background task. Test/typecheck and live PostgreSQL/deployment verification are still required. SQL and queue behavior have fake-executor/unit coverage, but real PostgreSQL concurrency, lease recovery, and worker shutdown still need integration testing. Queue processing is at-least-once: a crash after agent-side tool execution can lead to a retry, so tool effects may need idempotency protection. Do not deploy the webhook until the persistent store, agent session mapping, workspace isolation, authentication/network boundary, and host route registration are implemented and verified.
 
 ## Next steps
 
-1. Wire `SqlTelegramStore` to a real PostgreSQL executor and apply the migration; test concurrent claims and stale lease recovery against PostgreSQL.
-2. Mount `handleWebhook` in the existing server and start `runWorker` as a managed background task; confirm graceful shutdown and recovery behavior.
-3. Add cross-instance per-chat locking and protect against duplicate agent-side effects after worker crashes. Deterministic prompt IDs prevent many duplicate admissions, but Telegram reply delivery itself is not exactly-once.
-4. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
+1. Test concurrent claims, stale lease recovery, and graceful shutdown against a real PostgreSQL instance.
+2. Add cross-instance per-chat locking and protect against duplicate agent-side effects after worker crashes. Deterministic prompt IDs prevent many duplicate admissions, but Telegram reply delivery itself is not exactly-once.
+3. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
 
 Memory, RAG, media, and full storage cutover remain later phases.
+
+
+## Render deployment
+
+The repository includes a root `Dockerfile` and `render.yaml`. Configure these environment variables in Render:
+
+- `DATABASE_URL`: PostgreSQL connection URL (use the provider's TLS-enabled URL).
+- `TELEGRAM_BOT_TOKEN`: bot token.
+- `TELEGRAM_WEBHOOK_SECRET`: secret configured in Telegram's webhook registration.
+- `TELEGRAM_ALLOWED_USER_IDS`: comma-separated numeric Telegram user IDs allowed to use the bot.
+- `TELEGRAM_WEBHOOK_PATH` (optional): defaults to `/api/telegram/webhook`.
+
+The database migration is applied during startup. If all Telegram-specific variables are absent, the Telegram runtime stays disabled; if only some are present, startup fails fast. After deployment, register the public Render URL with Telegram using the same webhook secret.
+
+**Persistence caveat:** PostgreSQL stores queued updates and chat-to-session mappings, not the existing OpenCode session database or workspace files. On a host with an ephemeral filesystem, those local files may be lost on restart or redeploy. Keep the service at one instance until cross-instance per-chat locking is implemented and tested. Queue processing is at-least-once, not exactly-once.
