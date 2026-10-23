@@ -128,6 +128,7 @@
         "@opencode/plugin": "workspace:*",
         "@opencode/schema": "workspace:*",
         "@opencode/server": "workspace:*",
+        "@opencode/telegram": "workspace:*",
         "@opencode/tui": "workspace:*",
         "@opencode/util": "workspace:*",
         "@opentui/core": "catalog:",
@@ -820,7 +821,16 @@
         "typescript": "catalog:",
       },
     },
-    "packages/tui": {
+        "packages/telegram": {
+      "name": "@opencode/telegram",
+      "version": "2.1.2",
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native": "catalog:",
+      },
+    },
+"packages/tui": {
       "name": "@opencode/tui",
       "version": "2.1.2",
       "dependencies": {

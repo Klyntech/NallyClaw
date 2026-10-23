@@ -33,6 +33,7 @@
     "@opencode-ai/pty": "0.3.1",
     "@opencode/schema": "workspace:*",
     "@opencode/server": "workspace:*",
+    "@opencode/telegram": "workspace:*",
     "@opencode/tui": "workspace:*",
     "@opencode/util": "workspace:*",
     "@opentui/core": "catalog:",
