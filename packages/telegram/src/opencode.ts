@@ -83,9 +83,8 @@ export class OpenCodeClient {
   }
 
   async interrupt(sessionId: string): Promise<void> {
-    await this.request<void>(`/api/session/${encodeURIComponent(sessionId)}/interrupt`, {
+    await this.request<{ interrupted: boolean }>(`/api/session/${encodeURIComponent(sessionId)}/interrupt`, {
       method: "POST",
-      body: JSON.stringify({}),
     })
   }
 
