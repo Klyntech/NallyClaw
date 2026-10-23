@@ -12,7 +12,7 @@ function telegramUpdate(updateId = 1) {
     message: {
       message_id: 4,
       text: "inspect files",
-      chat: { id: 100 },
+      chat: { id: 100, type: "private" },
       from: { id: 200 },
     },
   }
