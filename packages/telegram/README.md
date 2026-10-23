@@ -1,16 +1,29 @@
 # NallyClaw Telegram Adapter
 
-This workspace package reserves the integration boundary for the planned Telegram adapter. It must be mounted into the existing server process and reuse NallyClaw's agent runtime rather than creating a second server or reimplementing the agent.
+This workspace package is the Telegram boundary for the existing NallyClaw/OpenCode agent. It must reuse the existing agent runtime so Phase 1 exposes the full configured toolset, including workspace and filesystem tools.
 
-## Current scaffold
+## Phase 1 foundation now present
 
-- Package/workspace metadata and TypeScript configuration.
-- Phase 0 decision and verification checklist: [`docs/telegram/phase-0.md`](../../docs/telegram/phase-0.md).
+- `src/security.ts` validates Telegram's webhook secret and parses ordinary text updates.
+- `src/render.ts` extracts plain text from common message shapes and chunks output below Telegram's message limit.
+- `src/client.ts` provides a minimal Telegram Bot API client without exposing the bot token in error messages.
+- `src/webhook.ts` provides an injectable Request handler with sender allowlisting and a durable-update-store contract.
+- `test/` contains unit tests for validation, rendering/chunking, and webhook flow.
 
-## Why feature code is not wired yet
+## Important integration boundary
 
-The design document explicitly makes Phase 0 a gate before Phase 1 feature implementation. The repository's product identity, workspace/filesystem requirements, existing SQLite data status, upstream-sync policy, real server API mapping, and Render/Neon runtime measurements must be confirmed first. This package is not deployable and currently contains no webhook, renderer, turn runner, database driver, or Telegram API client.
+The webhook handler intentionally requires two host-provided dependencies:
 
-## Planned first vertical slice
+1. `TelegramUpdateStore` must implement atomic, durable update claims and completion/release semantics. An in-memory map is not a production substitute.
+2. `runTurn` must call the existing headless NallyClaw agent session in the correct workspace. It must preserve the existing tool registry and permission behavior rather than reimplementing or silently narrowing tools.
 
-After Phase 0 passes, implement and test the renderer first, then the authenticated webhook and durable update deduplication, then the turn lifecycle/streaming and health/observability surface. Memory, RAG, media, and full storage cutover belong to later phases.
+These files are the first implementation slice; they are **not yet wired into the existing server**, and no test/typecheck run is claimed. Do not deploy the webhook until the persistent store, agent session mapping, workspace isolation, authentication/network boundary, and host route registration are implemented and verified.
+
+## Next steps
+
+1. Implement durable Telegram update and chat-to-session storage.
+2. Implement the headless agent adapter and ensure every existing tool is available through the same agent configuration.
+3. Mount the webhook into the existing server with secret validation and a private/authenticated boundary.
+4. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
+
+Memory, RAG, media, and full storage cutover remain later phases.
