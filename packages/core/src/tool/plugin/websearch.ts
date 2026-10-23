@@ -17,9 +17,9 @@ const httpErrors = new Map([
   [401, "Web search authentication failed (HTTP 401)"],
 ])
 
-export const description = `Search the web using the user's selected search integration. Use this for current information beyond knowledge cutoff.
+export const description = `Search the web using the user's selected search integration. Use this for current information beyond knowledge cutoff, especially dated external facts such as live sports scores, match statistics, lineups, schedules, news, weather, and prices. When asked for current information, search rather than relying on model memory; report only what the returned sources support.
 
-The current year is ${new Date().getFullYear()}. Use this year when searching for recent information or current events.`
+The current year is ${new Date().getFullYear()}. Use this year when searching for recent information or current events. Resolve relative dates to concrete calendar dates before searching when the user or request context provides enough information.`
 
 export const Input = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),
