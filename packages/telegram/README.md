@@ -8,6 +8,7 @@ This workspace package is the Telegram boundary for the existing NallyClaw/OpenC
 - `src/render.ts` extracts plain text from common message shapes and chunks output below Telegram's message limit.
 - `src/client.ts` provides a minimal Telegram Bot API client without exposing the bot token in error messages.
 - `src/opencode.ts` provides a thin client for the existing session/create, session/prompt, message-list, and interrupt routes. Prompt execution stays in the existing agent process and uses its configured tool registry.
+- `src/turn.ts` connects a Telegram chat to a saved agent session, submits a prompt, polls until the session emits an idle marker, and returns assistant text rather than echoing the admitted user message.
 - `src/webhook.ts` provides an injectable Request handler with sender allowlisting and a durable-update-store contract.
 - `test/` contains unit tests for validation, rendering/chunking, and webhook flow.
 
@@ -22,8 +23,8 @@ These files are the first implementation slice; they are **not yet wired into th
 
 ## Next steps
 
-1. Implement durable Telegram update and chat-to-session storage.
-2. Implement the headless agent adapter and ensure every existing tool is available through the same agent configuration.
+1. Implement durable Telegram update and chat-to-session storage; `TelegramSessionMap` is only an interface until a durable adapter is provided.
+2. Wire the turn runner into the webhook and serialize turns per chat, including crash/retry behavior.
 3. Mount the webhook into the existing server with secret validation and a private/authenticated boundary.
 4. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
 
