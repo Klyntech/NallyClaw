@@ -41,13 +41,14 @@ describe("createAgentTurnRunner", () => {
       },
     }
 
+    let clock = 100
     const run = createAgentTurnRunner({
       client,
       sessions: sessionMap(),
       pollIntervalMs: 50,
       timeoutMs: 500,
-      now: () => 100,
-      sleep: async () => {},
+      now: () => clock,
+      sleep: async (ms) => { clock += ms },
     })
 
     await expect(run({ chatId: 55, text: "hello" })).resolves.toBe("The answer")
