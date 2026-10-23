@@ -34,5 +34,8 @@ jobs:
       - name: Test personal memory and reference-resolution instructions
         run: bun --config .github/bunfig-ci.toml test packages/core/test/session-system-prompt.test.ts
 
+      - name: Test relative-date and sports request context
+        run: bun --config .github/bunfig-ci.toml test packages/core/test/nally-memory-request-context.test.ts
+
       - name: Test Telegram webhook and response handling
         run: bun --config .github/bunfig-ci.toml test packages/nally-telegram/src
