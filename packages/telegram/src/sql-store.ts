@@ -50,7 +50,7 @@ export class SqlTelegramStore implements TelegramQueueStore {
       `UPDATE telegram_updates
        SET status = 'failed', updated_at = NOW(), error = 'max_attempts_exceeded'
        WHERE status = 'processing' AND attempts >= 5
-         AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond')`,
+         AND updated_at < NOW() - ($1::double precision * INTERVAL '1 millisecond')`,
       [this.leaseMs],
     )
     const result = await this.sql.query<{
@@ -66,12 +66,12 @@ export class SqlTelegramStore implements TelegramQueueStore {
          WHERE chat_id IS NOT NULL AND user_id IS NOT NULL AND message_id IS NOT NULL AND text IS NOT NULL
            AND (
              status = 'queued'
-             OR (status = 'failed' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
-             OR (status = 'processing' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
+             OR (status = 'failed' AND attempts < 5 AND updated_at < NOW() - ($1::double precision * INTERVAL '1 millisecond'))
+             OR (status = 'processing' AND attempts < 5 AND updated_at < NOW() - ($1::double precision * INTERVAL '1 millisecond'))
            )
          ORDER BY updated_at, update_id
-         FOR UPDATE SKIP LOCKED
          LIMIT 1
+         FOR UPDATE SKIP LOCKED
        )
        UPDATE telegram_updates AS updates
        SET status = 'processing', updated_at = NOW(), attempts = updates.attempts + 1, error = NULL
@@ -98,7 +98,7 @@ export class SqlTelegramStore implements TelegramQueueStore {
          SET status = 'processing', updated_at = NOW(), error = NULL
          WHERE telegram_updates.status = 'failed'
             OR (telegram_updates.status = 'processing'
-                AND telegram_updates.updated_at < NOW() - ($2 * INTERVAL '1 millisecond'))
+                AND telegram_updates.updated_at < NOW() - ($2::double precision * INTERVAL '1 millisecond'))
        RETURNING update_id`,
       [String(updateId), this.leaseMs],
     )
