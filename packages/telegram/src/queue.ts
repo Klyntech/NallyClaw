@@ -146,8 +146,17 @@ export async function runTelegramWorker(options: TelegramWorkerOptions): Promise
       const replies = (Array.isArray(response) ? response : [response]).flatMap((text) => chunkTelegramText(text))
       for (const reply of replies) await options.sendMessage(message.chatId, reply)
       await options.queue.complete(message.updateId)
-    } catch {
-      // Never persist arbitrary error messages that may contain prompt data or secrets.
+    } catch (error) {
+      // Log only safe error metadata, never arbitrary messages that may contain prompt data or secrets.
+      const errorType = error instanceof Error ? error.name : typeof error
+      const status = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
+        ? error.status
+        : undefined
+      console.error("[nally-telegram] queued message processing failed", {
+        updateId: message.updateId,
+        errorType,
+        ...(status === undefined ? {} : { status }),
+      })
       try {
         await options.queue.release(message.updateId, "processing_failed")
       } catch {
