@@ -115,16 +115,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             return HttpServerResponse.jsonUnsafe({ error: "method_not_allowed" }, { status: 405 })
           }
 
-          const requestBody = yield* request.text
+          // Preserve the incoming body as a stream so the adapter's 64 KiB
+          // limiter runs before buffering or JSON parsing.
+          const webhookRequest = yield* HttpServerRequest.toWeb(request)
           const response = yield* Effect.tryPromise({
-            try: () =>
-              telegram.handleWebhook(
-                new Request(url.toString(), {
-                  method: "POST",
-                  headers: request.headers,
-                  body: requestBody,
-                }),
-              ),
+            try: () => telegram.handleWebhook(webhookRequest),
             catch: () => new Error("Telegram webhook request failed"),
           })
           const responseBody = yield* Effect.tryPromise({
