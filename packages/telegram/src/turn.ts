@@ -1,5 +1,5 @@
 import { renderPlainText } from "./render.js"
-import type { OpenCodeClient, OpenCodeMessage } from "./opencode.js"
+import { OpenCodeApiError, type OpenCodeClient, type OpenCodeMessage } from "./opencode.js"
 
 export interface TelegramSessionMap {
   /** Return the existing agent session for this Telegram chat, if any. */
@@ -73,7 +73,22 @@ export function createAgentTurnRunner(options: AgentTurnRunnerOptions) {
 
     const promptId = input.updateId === undefined ? undefined : `msg_tg_${input.updateId}`
     const existing = promptId === undefined ? undefined : await options.client.getMessage(sessionId, promptId)
-    const admitted = existing ?? await options.client.sendPrompt(sessionId, input.text, promptId)
+    let admitted = existing
+    if (!admitted) {
+      try {
+        admitted = await options.client.sendPrompt(sessionId, input.text, promptId)
+      } catch (error) {
+        // PostgreSQL can retain a chat-to-session mapping after the agent's local session
+        // database has been reset (for example after an ephemeral instance restart).
+        // A 404 on the prompt route is therefore treated as a stale session and retried
+        // once with a freshly created session. The failed 404 did not admit the prompt.
+        if (!(error instanceof OpenCodeApiError) || error.status !== 404) throw error
+        const replacement = await options.client.createSession("Telegram chat")
+        sessionId = replacement.id
+        await options.sessions.set(input.chatId, sessionId)
+        admitted = await options.client.sendPrompt(sessionId, input.text, promptId)
+      }
+    }
     const admittedId = messageId(admitted)
     if (!admittedId) throw new Error("Agent did not return an admitted message ID")
     const admittedAt = timestamp(admitted)
