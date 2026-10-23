@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@opencode/telegram",
+  "version": "2.1.2",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "bun test --only-failures",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native": "catalog:"
+  }
+}
