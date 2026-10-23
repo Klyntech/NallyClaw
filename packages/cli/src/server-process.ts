@@ -18,6 +18,7 @@ import { ServiceRegistration } from "./services/service-registration"
 import { RemoteTunnel } from "./services/remote-tunnel"
 import { WebUi } from "./services/web-ui"
 import { createTelegramServerRuntime } from "@opencode/telegram/server"
+import type { Transform } from "@opencode/server/process"
 import { databasePath } from "./database-path"
 
 export type Mode = "default" | "service" | "stdio"
@@ -103,7 +104,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
 
       const instanceID = randomUUID()
       const webTransform = yield* WebUi.handler()
-      const transform = (app: Parameters<typeof webTransform>[0]) => {
+      const transform: Transform = (app) => {
         const web = webTransform(app)
         if (!telegram) return web
         return Effect.gen(function* () {
