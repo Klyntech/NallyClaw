@@ -27,7 +27,7 @@ Source files: `packages/protocol/src/groups/session.ts`, `packages/protocol/src/
 |---|---|---|---|
 | List sessions | `GET /api/session` (`session.list`) | Find/select a conversation session | Candidate; contract test pending |
 | Create session | `POST /api/session` (`session.create`) | Start a new conversation session | Candidate; contract test pending |
-| Read message history | `GET /api/session/:sessionID/message` (`session.messages`) | Read projected session messages, newest first when `order=desc` | Verified in protocol schema: response is `{ data: PublicSessionMessage[], cursor: { previous?, next? } }`; there is no documented `GET /message/:messageID` route, so idempotency lookup must page through this list |
+| Read message history | `GET /api/session/:sessionID/message` (`session.messages`) | Read projected session messages, newest first when `order=desc` | Verified in protocol schema: response is `{ data: PublicSessionMessage[], cursor: { previous?, next? } }` |
 | Send a user turn | `POST /api/session/:sessionID/prompt` (`session.prompt`) | Submit Telegram text to the existing agent | Candidate; payload/response and lifecycle need an integration spike |
 | Interrupt a turn | `POST /api/session/:sessionID/interrupt` (`session.interrupt`) | Stop a running turn if supported by Telegram UX | Optional candidate |
 | Observe server events | `GET /api/event` (`event.subscribe`, SSE) | Receive progress and completion events | Candidate; stream reconnect/loss semantics must be handled because the route is documented as volatile |
@@ -45,7 +45,7 @@ These are still pending; no runtime measurement or integration test is claimed a
 - [ ] Deploy a trivial Bun service to Render Free; record cold-start duration, idle RSS, and RSS under one concurrent request. Phase 1 coding has begun by owner instruction; this measurement remains a deployment gate.
 - [ ] Verify Render-to-Neon connectivity using the pooled connection string; record latency and observed connection count without logging credentials.
 - [ ] Run `opencode serve` headlessly and script one session creation plus session listing against the actual generated API.
-- [x] Inspect the real session/message/event route definitions and record the initial adapter mapping table below. The message list is paginated and ordered by `order`; there is no single-message GET route. The headless end-to-end API spike and runtime request/response validation remain pending.
+- [x] Inspect the real session/message/event route definitions and record the initial adapter mapping table below. Both paginated message listing and `GET /api/session/:sessionID/message/:messageID` are defined. The headless end-to-end API spike and runtime request/response validation remain pending.
 - [ ] Freeze the `session_message.data` JSON shape that the renderer will consume.
 - [ ] Confirm the pinned Bun version and compatible Effect SQL/Postgres driver versions.
 - [ ] Record measurements and a go/no-go decision before Phase 1.
@@ -58,7 +58,7 @@ Phase 0 is complete only when the all-tools scope is recorded, the workspace arc
 
 1. **In progress:** establish the workspace/tool execution boundary so all existing agent tools are available with durable workspace access, per-session/user isolation, and least-privilege permissions.
 2. **Foundation committed:** add `packages/telegram` modules for webhook validation/dispatch, plain-text rendering/chunking, Telegram Bot API calls, a thin client for existing agent session routes, a polling turn runner that waits for the agent's idle marker and serializes turns per chat within one process, deterministic prompt IDs for retry recovery, an injected-SQL durable update/session store, a durable webhook queue/worker, a composed bot handler, and a PostgreSQL schema migration. Real DB verification and host/server wiring remain incomplete.
-3. **Foundation committed:** implement a turn runner using the existing session/prompt/messages API; it polls until the session emits an idle marker and extracts assistant text. A follow-up API-contract fix now recovers deterministic prompt IDs by paging through the documented message-list route rather than requesting a nonexistent `/message/:messageID` endpoint; unit coverage was added but not executed in this environment.
+3. **Foundation committed:** implement a turn runner using the existing session/prompt/messages API; it polls until the session emits an idle marker and extracts assistant text. Retry recovery uses the documented single-message GET route to look up deterministic prompt IDs before resubmitting; a contract test was added but not executed in this environment.
 4. **Pending:** integrate the adapter into the existing server using repository conventions and the real headless agent session API.
 5. **Foundation committed:** implement SQL-backed update claims and chat-to-session mapping plus a PostgreSQL schema migration. **Pending:** wire a real SQL executor and validate concurrency/lease recovery against PostgreSQL. Per-chat serialization is currently process-local; multi-instance locking and idempotency protections for agent-side effects after worker crashes are still required.
 6. **Pending:** add durable turn lifecycle, resumable processing, and a boot-time sweeper.
