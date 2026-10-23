@@ -80,6 +80,34 @@ describe("createAgentTurnRunner", () => {
     await expect(run({ chatId: 55, text: "hello" })).resolves.toContain("couldn't complete")
   })
 
+  test("reuses an already-admitted deterministic prompt after a worker retry", async () => {
+    let promptCalls = 0
+    const client = {
+      async createSession() { throw new Error("should not create") },
+      async getMessage(_sessionId: string, id: string) {
+        expect(id).toBe("msg_tg_42")
+        return { id, type: "user", time: { created: "2026-01-01T00:00:00.000Z" } }
+      },
+      async sendPrompt() { promptCalls++; throw new Error("must not duplicate prompt") },
+      async listMessages() {
+        return [
+          { id: "msg_idle", type: "idle", outcome: "succeeded", time: { created: "2026-01-01T00:00:03.000Z" } },
+          assistant("msg_assistant", "Recovered answer", "2026-01-01T00:00:02.000Z"),
+          { id: "msg_tg_42", type: "user", time: { created: "2026-01-01T00:00:00.000Z" } },
+        ]
+      },
+    }
+    const run = createAgentTurnRunner({
+      client,
+      sessions: sessionMap("ses_existing"),
+      pollIntervalMs: 50,
+      timeoutMs: 500,
+      now: () => 100,
+      sleep: async () => {},
+    })
+    await expect(run({ chatId: 55, text: "hello", updateId: 42 })).resolves.toBe("Recovered answer")
+    expect(promptCalls).toBe(0)
+  })
   test("rejects invalid polling configuration", () => {
     const client = {
       async createSession() { return { id: "ses_1" } },
