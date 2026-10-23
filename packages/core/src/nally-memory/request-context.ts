@@ -31,7 +31,11 @@ function shiftDate(date: string, days: number) {
 }
 
 export function isCurrentSportsStatsRequest(query: string) {
-  return SPORTS_TERMS.test(query) && (LIVE_SPORTS_TERMS.test(query) || RELATIVE_DATE_TERMS.test(query))
+  const sportsContext = SPORTS_TERMS.test(query) && (LIVE_SPORTS_TERMS.test(query) || RELATIVE_DATE_TERMS.test(query))
+  const shortDatedLookup = query.trim().split(/\s+/).length <= 7 &&
+    /\b(?:stats?|score|line[\s-]?ups?|results?|fixtures?)\b/i.test(query) &&
+    /\b(?:yesterday|today|tomorrow|last night|tonight|latest|current|recent)\b/i.test(query)
+  return sportsContext || shortDatedLookup
 }
 
 /**
