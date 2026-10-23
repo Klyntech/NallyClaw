@@ -23,8 +23,8 @@ export function createTelegramBot(options: TelegramBotOptions) {
   const runTurn = createAgentTurnRunner({
     client: options.agent,
     sessions: options.store,
-    pollIntervalMs: options.pollIntervalMs,
-    timeoutMs: options.timeoutMs,
+    ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   })
 
   return createTelegramWebhook({
