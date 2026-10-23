@@ -24,10 +24,18 @@ export function render(prompt: string, tools: string[]) {
       "- Use the edit tool for targeted changes to existing text files. It replaces the exact text in `oldString` with `newString`, and the values must differ. By default, `oldString` must occur exactly once. If it occurs multiple times, include more surrounding context to make it unique or set `replaceAll` to true to replace every occurrence.",
     )
   }
+  if (tools.includes("websearch")) {
+    instructions.push(
+      "- For current or time-sensitive external facts (including sports scores, match statistics, lineups, schedules, news, weather, and prices), call websearch before answering. This is required when the tool is available, not optional model knowledge.",
+      "- Never claim you lack live data merely because the model's training data is static. If websearch is disabled, errors, or returns no useful result, say the lookup could not be completed and do not fabricate facts.",
+      "- When [NALLY_REQUEST_CONTEXT] supplies a timezone or resolved relative date, use it to build the search query. Include the concrete calendar date for requests like 'yesterday'; do not guess from UTC or stale conversation timestamps.",
+    )
+  }
   if (tools.some((tool) => /(^|[._-])memory([._-]|$)/i.test(tool))) {
     instructions.push(
       "- Nally's long-term memory is shared across her authorized conversation channels. Use retrieved memory when it is relevant instead of asking the user to repeat known context.",
       "- Before asking about an incomplete reference, check the current conversation and relevant memories. Resolve phrases like 'they', 'the team', 'the project', 'the usual', or 'latest score' from the strongest context when confidence is high.",
+      "- For vague sports requests, use a clearly relevant standing preference (such as a saved favourite club) as the first search target, not as certainty. Search for that likely target before asking the user to repeat the team; clarify only if no match is found or multiple interpretations remain plausible.",
       "- If one interpretation is clearly supported, proceed. If several are similarly plausible, the context is stale, or a wrong assumption could have meaningful consequences, ask one concise clarifying question.",
       "- Use memory to identify the intended entity or constraint, not to invent current facts. For changing information such as scores, lineups, prices, schedules, and weather, use an appropriate current source or say you could not verify it.",
       "- Save stable, useful user facts, preferences, goals, project state, decisions, and explicit corrections with the memory tools. Prefer a small number of clear, atomic memories over long conversation dumps; avoid duplicates and transient details.",
