@@ -1,37 +1,40 @@
 # NallyClaw Telegram Adapter — Phase 0 Gate
 
-**Status:** In progress — owner decisions and runtime measurements are pending.  
+**Status:** In progress — owner decisions partly recorded; workspace decision and runtime measurements remain pending.  
 **Design source:** `DESIGN.pdf`, version 0.1 (2026-10-23).  
 **Implementation branch:** `nallyclaw-scaffolding`  
-**Rule:** Do not start Phase 1 feature code until the blocking decisions below are recorded.
+**Rule:** Do not start Phase 1 feature code until all blocking decisions are recorded and the runtime verification checklist has a go/no-go result.
 
 ## Why Phase 0 comes first
 
-The existing repository is a Bun/TypeScript AI coding-agent monorepo, not a generic personal-assistant CLI. The proposed Telegram integration should therefore be an adapter over existing headless capabilities, not a second agent implementation. The design also targets Render Free, which has no persistent disk and a 512 MB memory limit; filesystem-dependent coding tools cannot be assumed to work there.
+The existing repository is a Bun/TypeScript AI coding-agent monorepo, not a generic personal-assistant CLI. Telegram should be an adapter over existing headless capabilities, not a second agent implementation. The design targets Render Free, which has no persistent disk and a 512 MB memory limit; filesystem-dependent coding tools cannot be assumed to work there.
 
-## Blocking owner decisions
+## Owner decisions
 
-Record the decision, rationale, owner, and date for each item before Phase 1.
-
-- [ ] **A1 — Product identity:** Is Telegram a chat surface for the existing coding agent (recommended default), a separate general-purpose assistant profile, or a full product pivot? The design assumes the existing coding agent plus session/project memory.
-- [ ] **A2 — Workspace access:** Must the Telegram bot edit code in a repository? The Render Free design supports conversation, memory, and retrieval over ingested documents; filesystem-dependent coding tools require a mounted workspace and may require a different hosting plan.
-- [ ] **A3 — Existing data:** Is there a live SQLite database to preserve? If yes, record the resolved DB path on the target machine, DB size, and row counts per table. Do not copy secrets or database contents into this decision note.
-- [ ] **A5 — Upstream policy:** Confirm the adapter-package approach versus maintaining a deeper fork of core. The design recommends an adapter package to preserve upstream syncability.
+- [x] **A1 — Product identity:** Expose the existing AI coding agent through Telegram. Do not create a separate general-purpose assistant or pivot away from the coding-agent product.
+- [ ] **A2 — Workspace access (blocking):** **Not decided yet.** Determine whether Telegram must read/edit repository files or should initially support chat and document retrieval only. Hosting suitability depends on this decision.
+- [x] **A3 — Existing data:** No existing SQLite data needs migration. Do not plan a legacy SQLite data migration unless new evidence changes this decision.
+- [x] **A5 — Upstream policy:** Prefer an adapter package and preserve upstream compatibility; minimize changes to the agent core.
+  
+Decisions were recorded from the project owner's instruction on 2026-10-23. Revisit only if the owner changes them or verification reveals a material contradiction.
 
 ## Phase 0 verification checklist
 
-- [ ] Record the A1/A2/A3/A5 decisions above in this file.
+These are still pending; no runtime measurement or integration test is claimed as complete.
+
+- [x] Record the confirmed A1/A3/A5 owner decisions above.
+- [ ] Resolve A2 — workspace/filesystem requirements.
 - [ ] Deploy a trivial Bun service to Render Free; record cold-start duration, idle RSS, and RSS under one concurrent request.
-- [ ] Verify a connection from Render to Neon using the pooled connection string; record latency and observed connection count without logging credentials.
+- [ ] Verify Render-to-Neon connectivity using the pooled connection string; record latency and observed connection count without logging credentials.
 - [ ] Run `opencode serve` headlessly and script one session creation plus session listing against the actual generated API.
 - [ ] Enumerate the real routes in `packages/protocol/src/api` and add an adapter mapping table before implementing Telegram handlers.
 - [ ] Freeze the `session_message.data` JSON shape that the renderer will consume.
 - [ ] Confirm the pinned Bun version and compatible Effect SQL/Postgres driver versions.
-- [ ] Record the measurements and a go/no-go decision before Phase 1.
+- [ ] Record measurements and a go/no-go decision before Phase 1.
 
 ## Phase 0 exit criteria
 
-Phase 0 is complete only when the owner decisions are recorded, the headless API spike works, Render/Neon connectivity is measured, and memory/cold-start measurements support the proposed hosting target. If Bun exceeds the 512 MB budget or Neon latency makes a turn unacceptable, stop and re-plan hosting before adding bot feature code.
+Phase 0 is complete only when A2 is decided, the headless API spike works, Render/Neon connectivity is measured, and memory/cold-start measurements support the proposed hosting target. If Bun exceeds the 512 MB budget or Neon latency makes a turn unacceptable, stop and re-plan hosting before adding bot feature code.
 
 ## Phase 1 implementation order (not started)
 
