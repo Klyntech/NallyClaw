@@ -10,8 +10,10 @@ This workspace package is the Telegram boundary for the existing NallyClaw/OpenC
 - `src/opencode.ts` provides a thin client for the existing session/create, session/prompt, message-list, and interrupt routes. Prompt execution stays in the existing agent process and uses its configured tool registry.
 - `src/turn.ts` connects a Telegram chat to a saved agent session, submits a prompt, polls until the session emits an idle marker, and returns assistant text rather than echoing the admitted user message.
 - `src/sql-store.ts` implements durable update claims and chat-to-session mapping through an injected SQL executor. `migrations/001_telegram.sql` defines the PostgreSQL tables.
+- `src/bot.ts` composes the webhook, SQL store, Telegram client, and existing agent API client into one handler.
+- The turn runner serializes messages per chat within a single process; multi-instance deployments still require a database-backed per-chat lock.
 - `src/webhook.ts` provides an injectable Request handler with sender allowlisting and a durable-update-store contract.
-- `test/` contains unit tests for validation, rendering/chunking, and webhook flow.
+- `test/` contains unit tests for validation, rendering/chunking, webhook flow, turn polling, and the SQL-store contract.
 
 ## Important integration boundary
 
@@ -25,7 +27,7 @@ These files are the first implementation slice; they are **not yet wired into th
 ## Next steps
 
 1. Wire `SqlTelegramStore` to a real PostgreSQL executor and apply the migration; test concurrent claims and stale lease recovery against PostgreSQL.
-2. Wire the turn runner into the webhook and serialize turns per chat, including crash/retry behavior.
+2. Mount the composed bot handler in the existing server and ensure the webhook responds within Telegram's delivery timeout; long-running turns need a durable worker/queue before production use.
 3. Mount the webhook into the existing server with secret validation and a private/authenticated boundary.
 4. Add turn lifecycle/recovery, edit-in-place progress updates, rate limits, health checks, and structured correlation logs.
 
