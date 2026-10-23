@@ -77,7 +77,7 @@ export function createTelegramWebhook(options: TelegramWebhookOptions) {
         messageId: message.messageId,
         text: message.text,
       })
-      const replies = (Array.isArray(response) ? response : [response]).flatMap(chunkTelegramText)
+      const replies = (Array.isArray(response) ? response : [response]).flatMap((text) => chunkTelegramText(text))
 
       for (const reply of replies) {
         await options.sendMessage(message.chatId, reply)
