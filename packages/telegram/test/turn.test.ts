@@ -26,6 +26,7 @@ describe("createAgentTurnRunner", () => {
         calls.push("create:" + title)
         return { id: "ses_1" }
       },
+      async getMessage() { return undefined },
       async sendPrompt(sessionId: string, text: string) {
         calls.push("prompt:" + sessionId + ":" + text)
         return { id: "msg_user", type: "user", text, time: { created: "2026-01-01T00:00:00.000Z" } }
@@ -59,6 +60,7 @@ describe("createAgentTurnRunner", () => {
   test("reuses the saved session and returns a safe message for failed runs", async () => {
     const client = {
       async createSession() { throw new Error("should not create") },
+      async getMessage() { return undefined },
       async sendPrompt() { return { id: "msg_user", type: "user" } },
       async listMessages() {
         return [
@@ -81,6 +83,7 @@ describe("createAgentTurnRunner", () => {
   test("rejects invalid polling configuration", () => {
     const client = {
       async createSession() { return { id: "ses_1" } },
+      async getMessage() { return undefined },
       async sendPrompt() { return { id: "msg_1" } },
       async listMessages() { return [] },
     }
