@@ -1,3 +1,5 @@
+import type { QueuedTelegramMessage, TelegramQueueStore } from "./queue.js"
+
 export type SqlResult<Row> = { rows: Row[] }
 
 /** Small adapter shape so the Telegram package does not couple to a specific SQL driver. */
@@ -19,7 +21,7 @@ export type SqlTelegramStoreOptions = {
  * while its lease is valid. The executor must target the same durable database used by
  * every app instance.
  */
-export class SqlTelegramStore {
+export class SqlTelegramStore implements TelegramQueueStore {
   private readonly sql: TelegramSqlExecutor
   private readonly leaseMs: number
 
@@ -31,6 +33,53 @@ export class SqlTelegramStore {
     }
   }
 
+  async enqueue(message: QueuedTelegramMessage): Promise<"queued" | "duplicate"> {
+    const result = await this.sql.query<{ update_id: string | number }>(
+      `INSERT INTO telegram_updates
+        (update_id, status, chat_id, user_id, message_id, text, updated_at)
+       VALUES ($1, 'queued', $2, $3, $4, $5, NOW())
+       ON CONFLICT (update_id) DO NOTHING
+       RETURNING update_id`,
+      [String(message.updateId), String(message.chatId), String(message.userId), String(message.messageId), message.text],
+    )
+    return result.rows.length > 0 ? "queued" : "duplicate"
+  }
+
+  async claimNext(): Promise<QueuedTelegramMessage | undefined> {
+    const result = await this.sql.query<{
+      update_id: string | number
+      chat_id: string | number | null
+      user_id: string | number | null
+      message_id: string | number | null
+      text: string | null
+    }>(
+      `WITH candidate AS (
+         SELECT update_id
+         FROM telegram_updates
+         WHERE status = 'queued'
+            OR (status = 'failed' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
+            OR (status = 'processing' AND attempts < 5 AND updated_at < NOW() - ($1 * INTERVAL '1 millisecond'))
+         ORDER BY updated_at, update_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE telegram_updates AS updates
+       SET status = 'processing', updated_at = NOW(), attempts = updates.attempts + 1, error = NULL
+       FROM candidate
+       WHERE updates.update_id = candidate.update_id
+       RETURNING updates.update_id, updates.chat_id, updates.user_id, updates.message_id, updates.text`,
+      [this.leaseMs],
+    )
+    const row = result.rows[0]
+    if (!row || row.chat_id === null || row.user_id === null || row.message_id === null || row.text === null) return
+    return {
+      updateId: Number(row.update_id),
+      chatId: Number(row.chat_id),
+      userId: Number(row.user_id),
+      messageId: Number(row.message_id),
+      text: row.text,
+    }
+  }
   async begin(updateId: number): Promise<"acquired" | "completed" | "busy"> {
     const claimed = await this.sql.query<{ update_id: string | number }>(
       `INSERT INTO telegram_updates (update_id, status, updated_at)
@@ -67,12 +116,12 @@ export class SqlTelegramStore {
     if (state.rows[0]?.status !== "completed") throw new Error("Telegram update claim was not active")
   }
 
-  async release(updateId: number): Promise<void> {
+  async release(updateId: number, reason = "processing_failed"): Promise<void> {
     await this.sql.query(
       `UPDATE telegram_updates
-       SET status = 'failed', updated_at = NOW()
+       SET status = 'failed', updated_at = NOW(), error = $2
        WHERE update_id = $1 AND status = 'processing'`,
-      [String(updateId)],
+      [String(updateId), reason],
     )
   }
 
