@@ -11,14 +11,14 @@ describe("verifyWebhookSecret", () => {
 })
 
 describe("parseTelegramUpdate", () => {
-  test("extracts a regular text message", () => {
+  test("extracts a regular text message from a private chat", () => {
     expect(
       parseTelegramUpdate({
         update_id: 42,
         message: {
           message_id: 7,
           text: "  hello NallyClaw  ",
-          chat: { id: 123 },
+          chat: { id: 123, type: "private" },
           from: { id: 456 },
         },
       }),
@@ -28,6 +28,20 @@ describe("parseTelegramUpdate", () => {
     })
   })
 
+  test("ignores group chats to prevent multiple users sharing one agent session", () => {
+    expect(
+      parseTelegramUpdate({
+        update_id: 44,
+        message: {
+          message_id: 8,
+          text: "private workspace",
+          chat: { id: -123, type: "group" },
+          from: { id: 456 },
+        },
+      }),
+    ).toBeUndefined()
+  })
+
   test("ignores malformed, empty, and non-text updates", () => {
     expect(parseTelegramUpdate(null)).toBeUndefined()
     expect(parseTelegramUpdate({ update_id: "42" })).toBeUndefined()
@@ -35,7 +49,7 @@ describe("parseTelegramUpdate", () => {
     expect(
       parseTelegramUpdate({
         update_id: 43,
-        message: { message_id: 1, text: "   ", chat: { id: 1 }, from: { id: 2 } },
+        message: { message_id: 1, text: "   ", chat: { id: 1, type: "private" }, from: { id: 2 } },
       }),
     ).toBeUndefined()
   })
