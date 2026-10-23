@@ -35,6 +35,35 @@ describe("OpenCodeClient", () => {
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({ text: "hello", id: "msg_tg_42" })
   })
 
+  test("finds an admitted message by paging through the documented message-list route", async () => {
+    const calls: string[] = []
+    const client = new OpenCodeClient({
+      baseUrl: "http://127.0.0.1:4096",
+      fetch: async (input) => {
+        const url = new URL(String(input))
+        calls.push(url.toString())
+        if (url.pathname !== "/api/session/ses_123/message") return new Response(null, { status: 404 })
+        if (!url.searchParams.has("cursor")) {
+          return Response.json({
+            data: [{ id: "msg_recent", type: "assistant", text: "recent" }],
+            cursor: { next: "older-page" },
+          })
+        }
+        expect(url.searchParams.get("cursor")).toBe("older-page")
+        return Response.json({
+          data: [{ id: "msg_tg_42", type: "user", text: "already admitted" }],
+          cursor: {},
+        })
+      },
+    })
+
+    const message = await client.getMessage("ses_123", "msg_tg_42")
+
+    expect(message?.id).toBe("msg_tg_42")
+    expect(calls).toHaveLength(2)
+    expect(calls.every((url) => !url.includes("/message/msg_tg_42"))).toBe(true)
+  })
+
   test("does not include response bodies or URLs in HTTP errors", async () => {
     const client = new OpenCodeClient({
       baseUrl: "http://127.0.0.1:4096",
