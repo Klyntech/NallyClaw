@@ -22,7 +22,7 @@ function update(updateId = 1, userId = 20) {
     message: {
       message_id: 3,
       text: "inspect the project",
-      chat: { id: 10 },
+      chat: { id: 10, type: "private" },
       from: { id: userId },
     },
   }
