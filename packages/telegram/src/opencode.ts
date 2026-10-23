@@ -58,18 +58,30 @@ export class OpenCodeClient {
     return response.data
   }
 
-  async sendPrompt(sessionId: string, text: string): Promise<OpenCodeMessage> {
+  async sendPrompt(sessionId: string, text: string, id?: string): Promise<OpenCodeMessage> {
     const response = await this.request<{ data: OpenCodeMessage }>(
       `/api/session/${encodeURIComponent(sessionId)}/prompt`,
       {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, ...(id === undefined ? {} : { id }) }),
       },
     )
     if (!response.data) throw new Error("OpenCode prompt response did not include the admitted message")
     return response.data
   }
 
+  async getMessage(sessionId: string, messageId: string): Promise<OpenCodeMessage | undefined> {
+    try {
+      const response = await this.request<{ data: OpenCodeMessage }>(
+        `/api/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
+      )
+      if (!response.data) throw new Error("OpenCode message response was invalid")
+      return response.data
+    } catch (error) {
+      if (error instanceof OpenCodeApiError && error.status === 404) return undefined
+      throw error
+    }
+  }
   async listMessages(sessionId: string, limit = 50): Promise<OpenCodeMessage[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
       throw new RangeError("limit must be an integer between 1 and 200")
